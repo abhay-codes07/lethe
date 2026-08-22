@@ -12,6 +12,8 @@
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "declaration": true,
     "sourceMap": true,
     "skipLibCheck": true,
