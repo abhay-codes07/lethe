@@ -186,6 +186,55 @@ export interface Verification {
   readonly compactionsConfirmed: readonly string[];
 }
 
+/**
+ * What the certificate is actually a statement about.
+ *
+ * Without this, "0 residual traces" reads as a claim that the subject is gone
+ * from the world. It is not, and cannot be. Re-running discovery proves
+ * absence only in the systems that were swept, under the identifiers that
+ * were resolved — a clean sweep of nine systems says nothing about a tenth
+ * nobody connected, and industry experience is that most personal data lives
+ * in unstructured stores where discovery routinely misses it.
+ *
+ * A certificate that omits its own scope is an overclaim in a document
+ * intended to be shown to a regulator. Recording the boundary is what makes
+ * the rest of it defensible.
+ */
+export interface CertificateScope {
+  /** Connectors configured for this request. */
+  readonly systemsDeclared: readonly string[];
+  /**
+   * Declared systems that were not swept, each with the reason.
+   *
+   * Explicit rather than inferred: a system silently missing from the sweep is
+   * the difference between a disclosed limitation and a false attestation.
+   */
+  readonly systemsExcluded: readonly ExcludedSystem[];
+  /**
+   * Identifier kinds searched — never the values. The certificate is retained
+   * after the subject asked to be erased, so it must not carry their handles.
+   */
+  readonly identifierKindsSearched: readonly string[];
+  readonly identifierCount: number;
+}
+
+export interface ExcludedSystem {
+  readonly system: string;
+  readonly reason: string;
+}
+
+/**
+ * The limits clause, printed verbatim on every certificate.
+ *
+ * Fixed text rather than generated, so it cannot be softened per request.
+ */
+export const SCOPE_LIMITS =
+  'This certifies erasure within the scope recorded above. It attests that the ' +
+  'listed systems were searched under the listed identifier kinds and that no ' +
+  'trace remained. It does not attest to absence in systems not listed, under ' +
+  'identifiers not resolved, or in unstructured stores outside the declared ' +
+  'connectors.';
+
 export interface Certificate {
   readonly requestId: string;
   readonly subject: SubjectReference;
@@ -193,6 +242,9 @@ export interface Certificate {
   readonly entries: readonly CertificateEntry[];
   readonly approval: Approval;
   readonly verification: Verification;
+  readonly scope: CertificateScope;
+  /** The limits this attestation is bounded by. Always `SCOPE_LIMITS`. */
+  readonly limits: string;
   /** Head of the hash chain over the run's full event history. */
   readonly auditChainHead: string;
   readonly eventCount: number;
@@ -204,6 +256,7 @@ export interface CertificateInput {
   readonly entries: readonly CertificateEntry[];
   readonly approval: Approval;
   readonly verification: Verification;
+  readonly scope: CertificateScope;
   readonly events: readonly ChainedEvent[];
 }
 
@@ -217,7 +270,39 @@ export interface CertificateInput {
  * a false attestation.
  */
 export function issueCertificate(input: CertificateInput, now = new Date().toISOString()): Certificate {
-  const { verification, entries, events } = input;
+  const { verification, entries, events, scope } = input;
+
+  // Every declared system must be either swept or explicitly excluded with a
+  // reason. A system silently missing from both is the difference between a
+  // disclosed limitation and a false attestation — and it is the easy mistake,
+  // because a connector that failed early simply stops appearing.
+  const accountedFor = new Set([
+    ...verification.systemsSwept,
+    ...scope.systemsExcluded.map((excluded) => excluded.system),
+  ]);
+  const unaccounted = scope.systemsDeclared.filter((system) => !accountedFor.has(system));
+
+  if (unaccounted.length > 0) {
+    throw new Error(
+      `cannot certify request ${input.requestId}: ${unaccounted.join(', ')} ` +
+        'was declared but neither swept nor recorded as excluded. Certifying ' +
+        'would attest to erasure in a system nobody looked at.',
+    );
+  }
+
+  if (verification.systemsSwept.length === 0) {
+    throw new Error(
+      `cannot certify request ${input.requestId}: no system was swept, so there ` +
+        'is nothing the certificate can attest to.',
+    );
+  }
+
+  if (scope.identifierCount < 1 || scope.identifierKindsSearched.length === 0) {
+    throw new Error(
+      `cannot certify request ${input.requestId}: no identifiers were recorded ` +
+        'as searched, so the scope of the sweep is unknown.',
+    );
+  }
 
   if (verification.residualTraces > 0) {
     throw new Error(
@@ -256,6 +341,8 @@ export function issueCertificate(input: CertificateInput, now = new Date().toISO
     entries,
     approval: input.approval,
     verification,
+    scope,
+    limits: SCOPE_LIMITS,
     auditChainHead: chainHead(events),
     eventCount: events.length,
   };

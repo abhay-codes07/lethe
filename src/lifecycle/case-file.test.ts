@@ -251,6 +251,12 @@ describe('CaseFile.recordCertificate', () => {
         residualTraces: 0,
         compactionsConfirmed: [],
       },
+      scope: {
+        systemsDeclared: ['acme-postgres'],
+        systemsExcluded: [],
+        identifierKindsSearched: ['user_id'],
+        identifierCount: 1,
+      },
       events: chainEvents(events),
     });
   }
