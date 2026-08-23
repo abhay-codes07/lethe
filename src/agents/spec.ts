@@ -24,6 +24,8 @@ export interface McpServerBinding {
   /** Name of the connector as registered in the harness. Credentials live there. */
   readonly name: string;
   readonly enableTools: ToolSelector;
+  /** Exceptions carved out of `enableTools`, applied after it resolves. */
+  readonly disableTools?: readonly string[];
   /**
    * Tools that pause for human approval before running.
    *
