@@ -12,6 +12,10 @@
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
+    // Node runs these sources by stripping types, which cannot emit code.
+    // Constructor parameter properties, enums, and namespaces all compile to
+    // real output, so they fail at runtime rather than at build. Reject them here.
+    "erasableSyntaxOnly": true,
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "declaration": true,
