@@ -11,6 +11,7 @@ import {
   generateSubjectSalt,
   issueCertificate,
   referenceSubject,
+  SCOPE_LIMITS,
   verifyChain,
 } from './certificate.ts';
 
@@ -47,6 +48,12 @@ function input(overrides: Partial<CertificateInput> = {}): CertificateInput {
       systemsSwept: ['acme-postgres', 'acme-s3'],
       residualTraces: 0,
       compactionsConfirmed: [],
+    },
+    scope: {
+      systemsDeclared: ['acme-postgres', 'acme-s3'],
+      systemsExcluded: [],
+      identifierKindsSearched: ['email', 'user_id'],
+      identifierCount: 2,
     },
     events: chainEvents(events(3)),
     ...overrides,
@@ -162,7 +169,7 @@ describe('issueCertificate', () => {
           input({
             verification: {
               rediscoveredAt: '2026-08-22T11:05:00.000Z',
-              systemsSwept: ['acme-postgres'],
+              systemsSwept: ['acme-postgres', 'acme-s3'],
               residualTraces: 3,
               compactionsConfirmed: [],
             },
@@ -230,5 +237,107 @@ describe('certificateTotals', () => {
     );
 
     assert.deepEqual(certificateTotals(certificate), { erased: 10, anonymised: 4, retained: 7 });
+  });
+});
+
+describe('issueCertificate — scope', () => {
+  it('records what the attestation is actually about', () => {
+    const certificate = issueCertificate(input());
+
+    assert.deepEqual(certificate.scope.systemsDeclared, ['acme-postgres', 'acme-s3']);
+    assert.deepEqual(certificate.scope.identifierKindsSearched, ['email', 'user_id']);
+    assert.equal(certificate.scope.identifierCount, 2);
+  });
+
+  // Without this, "0 residual traces" reads as a claim the subject is gone
+  // from the world rather than from the systems that were searched.
+  it('carries the limits clause verbatim', () => {
+    const certificate = issueCertificate(input());
+
+    assert.equal(certificate.limits, SCOPE_LIMITS);
+    assert.match(certificate.limits, /does not attest to absence in systems not listed/);
+  });
+
+  // The easy mistake: a connector that fails early simply stops appearing, and
+  // its absence looks like a system that had nothing in it.
+  it('refuses when a declared system was neither swept nor excluded', () => {
+    assert.throws(
+      () =>
+        issueCertificate(
+          input({
+            scope: {
+              systemsDeclared: ['acme-postgres', 'acme-s3', 'acme-vectors'],
+              systemsExcluded: [],
+              identifierKindsSearched: ['email'],
+              identifierCount: 1,
+            },
+          }),
+        ),
+      /acme-vectors was declared but neither swept nor recorded as excluded/,
+    );
+  });
+
+  it('accepts a declared system that is explicitly excluded with a reason', () => {
+    assert.doesNotThrow(() =>
+      issueCertificate(
+        input({
+          scope: {
+            systemsDeclared: ['acme-postgres', 'acme-s3', 'acme-vectors'],
+            systemsExcluded: [{ system: 'acme-vectors', reason: 'connector unreachable during sweep' }],
+            identifierKindsSearched: ['email'],
+            identifierCount: 1,
+          },
+        }),
+      ),
+    );
+  });
+
+  it('refuses when nothing was swept at all', () => {
+    assert.throws(
+      () =>
+        issueCertificate(
+          input({
+            verification: {
+              rediscoveredAt: '2026-08-22T11:05:00.000Z',
+              systemsSwept: [],
+              residualTraces: 0,
+              compactionsConfirmed: [],
+            },
+            scope: {
+              systemsDeclared: [],
+              systemsExcluded: [],
+              identifierKindsSearched: ['email'],
+              identifierCount: 1,
+            },
+          }),
+        ),
+      /no system was swept/,
+    );
+  });
+
+  it('refuses when no identifiers were recorded as searched', () => {
+    assert.throws(
+      () =>
+        issueCertificate(
+          input({
+            scope: {
+              systemsDeclared: ['acme-postgres', 'acme-s3'],
+              systemsExcluded: [],
+              identifierKindsSearched: [],
+              identifierCount: 0,
+            },
+          }),
+        ),
+      /scope of the sweep is unknown/,
+    );
+  });
+
+  // The certificate is retained after the subject asked to be erased, so it
+  // must not carry their handles.
+  it('records identifier kinds, never identifier values', () => {
+    const serialised = JSON.stringify(issueCertificate(input()));
+
+    assert.ok(!serialised.includes('ada@example.com'));
+    assert.ok(serialised.includes('email'));
   });
 });
