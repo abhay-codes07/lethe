@@ -108,13 +108,3 @@ export function totalRecords(findings: readonly Finding[]): number {
   return findings.reduce((sum, f) => sum + f.count, 0);
 }
 
-/** Group findings by system, preserving input order within each group. */
-export function bySystem(findings: readonly Finding[]): ReadonlyMap<SystemId, readonly Finding[]> {
-  const grouped = new Map<SystemId, Finding[]>();
-  for (const finding of findings) {
-    const existing = grouped.get(finding.system);
-    if (existing) existing.push(finding);
-    else grouped.set(finding.system, [finding]);
-  }
-  return grouped;
-}

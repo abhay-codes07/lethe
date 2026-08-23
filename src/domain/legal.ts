@@ -59,6 +59,20 @@ function isFinancialRecord(finding: Finding): boolean {
  * own line; anything requiring judgement belongs in front of a human.
  */
 export const DEFAULT_RETENTION_RULES: readonly RetentionRule[] = [
+  // Must precede every rule that permits anonymisation. A record under an open
+  // dispute is often also a financial record, and the tax rule would anonymise
+  // it — destroying the identity that is frequently the fact in dispute, while
+  // the matter is still live.
+  {
+    id: 'active-legal-claim',
+    ground: 'legal_claims',
+    citation: 'GDPR Art.17(3)(e)',
+    rationale:
+      'Data subject to an open dispute, chargeback or legal hold must be preserved ' +
+      'until the matter closes.',
+    anonymisationPermitted: false,
+    appliesTo: (finding) => finding.locator.kind === 'table' && finding.locator.table === 'legal_holds',
+  },
   {
     id: 'tax-records',
     ground: 'legal_obligation',
@@ -70,16 +84,6 @@ export const DEFAULT_RETENTION_RULES: readonly RetentionRule[] = [
     retainForMonths: 84,
     anonymisationPermitted: true,
     appliesTo: isFinancialRecord,
-  },
-  {
-    id: 'active-legal-claim',
-    ground: 'legal_claims',
-    citation: 'GDPR Art.17(3)(e)',
-    rationale:
-      'Data subject to an open dispute, chargeback or legal hold must be preserved ' +
-      'until the matter closes.',
-    anonymisationPermitted: false,
-    appliesTo: (finding) => finding.locator.kind === 'table' && finding.locator.table === 'legal_holds',
   },
   {
     id: 'published-contributions',

@@ -73,10 +73,6 @@ export function identifierKey(id: Identifier): string {
   return `${id.system}:${id.kind}:${id.value}`;
 }
 
-export function identifiersEqual(a: Identifier, b: Identifier): boolean {
-  return identifierKey(a) === identifierKey(b);
-}
-
 /**
  * The set of identifiers belonging to one subject, and how each was reached.
  *

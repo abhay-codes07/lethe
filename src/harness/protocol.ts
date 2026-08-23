@@ -157,8 +157,3 @@ export function isPause(
 ): event is ToolApprovalRequiredEvent | ToolResponseRequiredEvent {
   return event.type === 'tool.approval_required' || event.type === 'tool.response_required';
 }
-
-/** Statuses from which a turn can still be resumed by supplying input. */
-export function isResumable(status: TurnStatus): boolean {
-  return status === 'paused';
-}
