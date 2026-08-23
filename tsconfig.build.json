@@ -1,0 +1,11 @@
+{
+  // Build config. Identical to tsconfig.json except that tests are not
+  // emitted — dist should carry the product, not the fake transports and
+  // fixtures written to exercise it.
+  //
+  // Tests are still typechecked: `npm run typecheck` uses tsconfig.json,
+  // which includes them. Excluding them there instead would have silently
+  // stopped checking them, which is the gap CI exists to close.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

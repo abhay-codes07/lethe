@@ -23,6 +23,9 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
+  // Everything, tests included — this config is what `typecheck` runs, and a
+  // test that does not compile is a test that proves nothing.
+  // Emitting is done by tsconfig.build.json, which drops the tests.
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

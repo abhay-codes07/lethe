@@ -226,15 +226,3 @@ export async function verifyOrThrow(
   return reports;
 }
 
-/** One-line summaries, for logging at startup. */
-export function formatReport(report: VerificationReport): string {
-  if (report.violations.length === 0) {
-    return `${report.agent}: ${report.toolsChecked} tool(s) verified`;
-  }
-
-  const lines = report.violations.map(
-    (v) => `  ${v.severity}: ${v.server}${v.tool ? `.${v.tool}` : ''} — ${v.message}`,
-  );
-
-  return [`${report.agent}: ${report.violations.length} issue(s)`, ...lines].join('\n');
-}
