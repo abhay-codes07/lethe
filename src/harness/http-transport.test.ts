@@ -284,3 +284,42 @@ describe('HttpTransport.fromEnv', () => {
     );
   });
 });
+
+describe('HttpTransport.createSession', () => {
+  it('posts the inline spec and returns the allocated id', async () => {
+    const captured: Captured[] = [];
+    const transport = new HttpTransport({
+      baseUrl: 'http://harness.test',
+      apiKey: 'secret-key',
+      fetch: fakeFetch([], captured, { json: { data: { id: 'sess-42' } } }),
+    });
+
+    const id = await transport.createSession({ model: { name: 'm' } });
+
+    assert.equal(id, 'sess-42');
+    assert.match(captured[0]?.url ?? '', /\/api\/v1\/sessions$/);
+    assert.equal(captured[0]?.method, 'POST');
+    assert.match(captured[0]?.body ?? '', /"agent":\{"spec":/);
+    assert.equal(captured[0]?.headers['authorization'], 'Bearer secret-key');
+  });
+
+  // A session id is the handle every later call hangs off; guessing one turns
+  // every subsequent failure into a mystery about the wrong resource.
+  it('refuses a response carrying no id', async () => {
+    const transport = new HttpTransport({
+      baseUrl: 'http://harness.test',
+      fetch: fakeFetch([], [], { json: { data: {} } }),
+    });
+
+    await assert.rejects(transport.createSession({}), /no id; refusing to guess/);
+  });
+
+  it('reports the server explanation on failure', async () => {
+    const transport = new HttpTransport({
+      baseUrl: 'http://harness.test',
+      fetch: fakeFetch([], [], { status: 422, statusText: 'Unprocessable', text: 'bad manifest' }),
+    });
+
+    await assert.rejects(transport.createSession({}), /422 Unprocessable — bad manifest/);
+  });
+});

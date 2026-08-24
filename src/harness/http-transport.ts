@@ -137,6 +137,37 @@ export class HttpTransport implements Transport {
     return { turnId: body.turn_id ?? body.turnId ?? turnId, status: mapWireStatus(status) };
   }
 
+  /**
+   * Create a session carrying an inline agent spec, returning its id.
+   *
+   * Not on the Transport interface: orchestrators are handed a session that
+   * already exists — creating one is setup, and belongs to whoever owns the
+   * run.
+   *
+   * Inline specs rather than registry names, deliberately. A named agent must
+   * be registered ahead of time and drifts from the code that describes it; an
+   * inline spec means the agent the harness runs is exactly the object the
+   * startup assertions checked, with no copy in between to go stale.
+   */
+  async createSession(manifest: Readonly<Record<string, unknown>>): Promise<string> {
+    const response = await this.#fetch(this.#url('/api/v1/sessions'), {
+      method: 'POST',
+      headers: this.#headers(),
+      body: JSON.stringify({ agent: { spec: manifest } }),
+    });
+
+    await assertOk(response, 'create session');
+
+    const body = (await response.json()) as { data?: { id?: string } };
+    const id = body.data?.id;
+
+    if (typeof id !== 'string' || id === '') {
+      throw new Error('harness created a session but returned no id; refusing to guess one');
+    }
+
+    return id;
+  }
+
   #url(path: string): string {
     return `${this.#baseUrl}${path}`;
   }

@@ -21,6 +21,7 @@
  *   node src/smoke/run.ts
  */
 
+import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { verifyAgent } from '../connectors/verify.ts';
@@ -58,7 +59,6 @@ const stopOnQuestion: QuestionResponder = {
 interface SmokeOptions {
   readonly baseUrl: string;
   readonly apiKey: string | undefined;
-  readonly sessionId: string;
   readonly scout: AgentSpec;
   readonly seed: Identifier;
   /** Injected so the run's reporting can be exercised without a network. */
@@ -120,6 +120,20 @@ export async function smoke(options: SmokeOptions): Promise<number> {
     bad((error as Error).message);
   }
 
+  // A session must exist before a turn can run on it. Inventing an id and
+  // starting a turn 404s — sessions are created, not named into being.
+  step('session');
+  let sessionId: string;
+  try {
+    sessionId = await transport.createSession(
+      toManifest(options.scout) as unknown as Readonly<Record<string, unknown>>,
+    );
+    ok(`created ${sessionId} with the scout inline`);
+  } catch (error) {
+    bad((error as Error).message);
+    return 1;
+  }
+
   step('discovery');
   const caseFile = new CaseFile('SMOKE-1');
 
@@ -129,7 +143,7 @@ export async function smoke(options: SmokeOptions): Promise<number> {
       transport,
       catalog,
       scout: options.scout,
-      sessionId: options.sessionId,
+      sessionId,
       seeds: [options.seed],
       responder: stopOnQuestion,
       maxQuestionRounds: 0,
@@ -181,7 +195,6 @@ async function main(): Promise<void> {
   const code = await smoke({
     baseUrl,
     apiKey: process.env['TRUEFORGE_API_KEY'],
-    sessionId: process.env['LETHE_SESSION_ID'] ?? `smoke-${Date.now()}`,
     scout: scoutAgent,
     seed: DEMO_SEED,
   });

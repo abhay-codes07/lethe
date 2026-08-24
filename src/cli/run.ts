@@ -17,6 +17,7 @@ import { createInterface } from 'node:readline/promises';
 import { writeFile } from 'node:fs/promises';
 
 import { executorAgent } from '../agents/executor.ts';
+import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { generateSubjectSalt } from '../domain/certificate.ts';
@@ -89,6 +90,13 @@ async function main(): Promise<void> {
   const seed: Identifier = { kind: 'email', value: args.seedEmail, system: 'acme-postgres' };
   const caseFile = new CaseFile(args.requestId);
 
+  // One session per agent, created up front with the spec inline: the agent
+  // the harness runs is exactly the object the startup assertions checked.
+  const asManifest = (spec: typeof scoutAgent) =>
+    toManifest(spec) as unknown as Readonly<Record<string, unknown>>;
+  const scoutSession = await transport.createSession(asManifest(scoutAgent));
+  const executorSession = await transport.createSession(asManifest(executorAgent));
+
   try {
     // 1 — discovery, with identity questions answered by the person running this.
     process.stdout.write(`── discovery: sweeping for ${args.seedEmail}\n`);
@@ -97,7 +105,7 @@ async function main(): Promise<void> {
       transport,
       catalog,
       scout: scoutAgent,
-      sessionId: `${args.requestId}-discovery`,
+      sessionId: scoutSession,
       seeds: [seed],
       responder: {
         async answer(question: QuestionRequest): Promise<string> {
@@ -121,7 +129,7 @@ async function main(): Promise<void> {
       transport,
       catalog,
       scout: scoutAgent,
-      sessionId: `${args.requestId}-simulation`,
+      sessionId: scoutSession,
     });
 
     if (simulation.kind === 'blocked') {
@@ -158,7 +166,7 @@ async function main(): Promise<void> {
       transport,
       catalog,
       executor: executorAgent,
-      sessionId: `${args.requestId}-execution`,
+      sessionId: executorSession,
       ledger,
       backupRotatesAt: rotationDate(new Date()),
     });
@@ -174,7 +182,7 @@ async function main(): Promise<void> {
       transport,
       catalog,
       scout: scoutAgent,
-      sessionId: `${args.requestId}-verification`,
+      sessionId: scoutSession,
       ledger,
       subjectSalt,
     });
