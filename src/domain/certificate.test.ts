@@ -341,3 +341,36 @@ describe('issueCertificate — scope', () => {
     assert.ok(serialised.includes('email'));
   });
 });
+
+describe('issueCertificate — backup disclosure', () => {
+  const beyondUse = {
+    identifiersSuppressed: 2,
+    finalRotationAt: '2026-11-24T09:00:00.000Z',
+    statement: 'Copies remain in backup media and cannot re-enter a live system.',
+  };
+
+  it('carries the disclosure when data survives in backups', () => {
+    const certificate = issueCertificate(input({ beyondUse }), '2026-08-24T09:00:00.000Z');
+
+    assert.equal(certificate.beyondUse?.identifiersSuppressed, 2);
+    assert.equal(certificate.beyondUse?.finalRotationAt, '2026-11-24T09:00:00.000Z');
+  });
+
+  // Its absence is itself a claim: no backup copies survive.
+  it('omits the section entirely when nothing was suppressed', () => {
+    assert.equal(issueCertificate(input()).beyondUse, undefined);
+  });
+
+  // Otherwise the certificate tells the requester their data is gone on a date
+  // that has already passed, while also saying it survives.
+  it('refuses a rotation date that has already passed', () => {
+    assert.throws(
+      () =>
+        issueCertificate(
+          input({ beyondUse: { ...beyondUse, finalRotationAt: '2026-01-01T00:00:00.000Z' } }),
+          '2026-08-24T09:00:00.000Z',
+        ),
+      /disclosure contradicts itself/,
+    );
+  });
+});

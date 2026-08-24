@@ -243,11 +243,32 @@ export interface Certificate {
   readonly approval: Approval;
   readonly verification: Verification;
   readonly scope: CertificateScope;
+  /**
+   * What remains in backup media and cannot be edited in place.
+   *
+   * Absent only when nothing was suppressed. Its absence therefore means "no
+   * backup copies survive", which is a claim in its own right — see
+   * `issueCertificate`.
+   */
+  readonly beyondUse?: BeyondUseSection;
   /** The limits this attestation is bounded by. Always `SCOPE_LIMITS`. */
   readonly limits: string;
   /** Head of the hash chain over the run's full event history. */
   readonly auditChainHead: string;
   readonly eventCount: number;
+}
+
+/**
+ * The backup disclosure.
+ *
+ * Structurally identical to the ledger's attestation, restated here so the
+ * certificate does not depend on the suppression module — a certificate is
+ * read years later, and should not need the code that produced it.
+ */
+export interface BeyondUseSection {
+  readonly identifiersSuppressed: number;
+  readonly finalRotationAt: string;
+  readonly statement: string;
 }
 
 export interface CertificateInput {
@@ -257,6 +278,8 @@ export interface CertificateInput {
   readonly approval: Approval;
   readonly verification: Verification;
   readonly scope: CertificateScope;
+  /** Omit only when the erasure left nothing in backup media. */
+  readonly beyondUse?: BeyondUseSection;
   readonly events: readonly ChainedEvent[];
 }
 
@@ -304,6 +327,15 @@ export function issueCertificate(input: CertificateInput, now = new Date().toISO
     );
   }
 
+  // A rotation date already past would tell the requester their data is gone
+  // when the certificate itself says it survives.
+  if (input.beyondUse && Date.parse(input.beyondUse.finalRotationAt) <= Date.parse(now)) {
+    throw new Error(
+      `cannot certify request ${input.requestId}: the stated backup rotation ` +
+        'date has already passed, so the disclosure contradicts itself.',
+    );
+  }
+
   if (verification.residualTraces > 0) {
     throw new Error(
       `cannot certify request ${input.requestId}: ${verification.residualTraces} ` +
@@ -342,6 +374,7 @@ export function issueCertificate(input: CertificateInput, now = new Date().toISO
     approval: input.approval,
     verification,
     scope,
+    ...(input.beyondUse !== undefined ? { beyondUse: input.beyondUse } : {}),
     limits: SCOPE_LIMITS,
     auditChainHead: chainHead(events),
     eventCount: events.length,
