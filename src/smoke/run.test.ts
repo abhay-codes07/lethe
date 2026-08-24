@@ -49,7 +49,6 @@ describe('smoke', () => {
       smoke({
         baseUrl: 'http://nothing.invalid',
         apiKey: undefined,
-        sessionId: 'smoke-test',
         scout: spec(),
         seed,
         fetch: unreachable,
@@ -60,33 +59,48 @@ describe('smoke', () => {
     assert.match(out, /connectors/);
   });
 
-  it('reports which stage it stopped at', async () => {
-    const { out } = await capture(() =>
+  // A session must exist before a turn can run on it; the smoke run creates
+  // one and says so when it cannot.
+  it('stops at session creation when the harness is unreachable', async () => {
+    const { code, out } = await capture(() =>
       smoke({
         baseUrl: 'http://nothing.invalid',
         apiKey: undefined,
-        sessionId: 'smoke-test',
         scout: spec(),
         seed,
         fetch: unreachable,
       }),
     );
 
-    assert.match(out, /stopped at verification|FAIL/);
+    assert.equal(code, 1);
+    assert.match(out, /── session/);
+    assert.match(out, /FAIL/);
   });
 
-  it('prints the case file history so a failure is diagnosable', async () => {
+  it('prints the case file history when discovery fails after a session exists', async () => {
+    // Session creation succeeds; everything after does not.
+    const partial = (async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith('/api/v1/sessions') && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({ data: { id: 'sess-smoke' } }),
+        } as unknown as Response;
+      }
+      throw new Error('ECONNREFUSED');
+    }) as unknown as typeof globalThis.fetch;
+
     const { out } = await capture(() =>
       smoke({
         baseUrl: 'http://nothing.invalid',
         apiKey: undefined,
-        sessionId: 'smoke-test',
         scout: spec(),
         seed,
-        fetch: unreachable,
+        fetch: partial,
       }),
     );
 
+    assert.match(out, /created sess-smoke/);
     assert.match(out, /case file:/);
   });
 });
