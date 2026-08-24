@@ -11,7 +11,7 @@
  * damage it would do. Approval is granted against evidence or not at all.
  */
 
-import { describeLocator, type Finding, totalRecords } from './finding.ts';
+import { describeLocatorRedacted, type Finding, totalRecords } from './finding.ts';
 import type { Identifier } from './identity.ts';
 import { assessRetention, requiresHumanReview, type RetentionRule } from './legal.ts';
 
@@ -179,7 +179,10 @@ function planFinding(finding: Finding, rules?: readonly RetentionRule[]): Planne
     justification: compactionNeeded
       ? `Delete alone leaves this recoverable (${finding.durability}); ` +
         'compaction is scheduled so the erasure is real.'
-      : `No retention ground applies to ${describeLocator(finding.locator)}.`,
+      // The redacted form: justifications end up on the certificate, which
+      // outlives the subject's erasure, so they must not embed the predicate
+      // that names them. The card shows the full locator on its own line.
+      : `No retention ground applies to ${describeLocatorRedacted(finding.locator)}.`,
     irreversible: true,
   };
 }

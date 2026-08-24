@@ -94,6 +94,31 @@ export function describeLocator(locator: Locator): string {
 }
 
 /**
+ * Locator description safe to retain on a certificate.
+ *
+ * The full form includes predicates, object keys and resource ids, and those
+ * embed the subject's identifiers — `where user_id = 4471`, `users/4471.json`,
+ * `customer/cus_123`. Fine on the plan card, which a reviewer reads in the
+ * moment and which must show exactly what is in scope; not fine on a document
+ * about the person retained after they asked to be erased. This form names
+ * the container and nothing inside it.
+ */
+export function describeLocatorRedacted(locator: Locator): string {
+  switch (locator.kind) {
+    case 'table':
+      return `${locator.schema}.${locator.table}`;
+    case 'object':
+      return `s3://${locator.bucket}/…`;
+    case 'api_resource':
+      return locator.resource;
+    case 'vector':
+      return `${locator.index} (${locator.documentIds.length} documents)`;
+    case 'log_stream':
+      return `${locator.stream} over ${locator.window}`;
+  }
+}
+
+/**
  * Findings whose data survives an ordinary delete call.
  *
  * These are the ones that turn "we deleted it" into a false statement, so the
