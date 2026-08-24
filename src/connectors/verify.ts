@@ -176,11 +176,36 @@ export async function verifyAgent(
 }
 
 /**
- * Destructive tools the binding exposes but does not gate.
+ * Whether the gate list covers a tool.
  *
- * The likeliest real failure in this codebase: `require_approval_for_tools`
- * names the tools that existed when the spec was written, and a connector that
- * later gained one leaves it unattended.
+ * The harness accepts selectors here as well as names — `@all`, `@write`,
+ * `@destructive` — and a selector gate is what closes the likeliest real
+ * failure: a name list gates the tools that existed when the spec was
+ * written, while `@write` gates whatever the connector grows later.
+ *
+ * The selector semantics are modelled conservatively, from annotations only.
+ * An unannotated tool counts as mutating for exposure (D-60) but is NOT
+ * assumed covered by `@write` or `@destructive`, because whether the harness
+ * would gate it is the server operator's annotation call — and assuming a
+ * gate that might not fire is the unsafe direction. `@all` alone covers
+ * everything. The result: an unannotated mutating tool under a selector gate
+ * is still flagged, forcing an explicit decision instead of a hope.
+ */
+function gateCovers(gate: ReadonlySet<string>, tool: ToolDescriptor): boolean {
+  if (gate.has(tool.name)) return true;
+  if (gate.has('@all')) return true;
+
+  const destructive = tool.annotations?.destructiveHint === true;
+  const declaredWrite = destructive || tool.annotations?.readOnlyHint === false;
+
+  if (gate.has('@destructive') && destructive) return true;
+  if (gate.has('@write') && declaredWrite) return true;
+
+  return false;
+}
+
+/**
+ * Destructive tools the binding exposes but does not gate.
  */
 function ungatedWrites(
   binding: McpServerBinding,
@@ -189,14 +214,15 @@ function ungatedWrites(
   const gated = new Set(binding.requireApprovalForTools ?? []);
 
   return exposed
-    .filter((tool) => isMutating(tool) && !gated.has(tool.name))
+    .filter((tool) => isMutating(tool) && !gateCovers(gated, tool))
     .map((tool) => ({
       severity: 'fatal' as const,
       server: binding.name,
       tool: tool.name,
       message:
-        'can write but is not in require_approval_for_tools, so it would run ' +
-        'unattended. Add it to the gate or remove it from enable_tools.',
+        'can write but is not covered by require_approval_for_tools, so it ' +
+        'would run unattended. Gate it by name or selector, or remove it from ' +
+        'enable_tools.',
     }));
 }
 

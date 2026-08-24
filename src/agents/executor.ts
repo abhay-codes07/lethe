@@ -52,26 +52,29 @@ export const executorAgent: AgentSpec = {
   name: 'lethe-executor',
   model: 'anthropic/claude-sonnet-4-6',
   instructions: INSTRUCTIONS,
+  // Every gate carries @write alongside the names. The names say what the
+  // spec expects; the selector covers whatever the connector grows later, so
+  // a newly-added destructive tool is born gated instead of born unattended.
   mcpServers: [
     {
       name: 'acme-postgres',
       enableTools: ['execute_sql', 'delete_rows', 'anonymise_rows', 'query'],
-      requireApprovalForTools: ['execute_sql', 'delete_rows', 'anonymise_rows'],
+      requireApprovalForTools: ['@write', 'execute_sql', 'delete_rows', 'anonymise_rows'],
     },
     {
       name: 'acme-s3',
       enableTools: ['delete_object', 'get_object', 'list_objects'],
-      requireApprovalForTools: ['delete_object'],
+      requireApprovalForTools: ['@write', 'delete_object'],
     },
     {
       name: 'acme-stripe',
       enableTools: ['delete_customer', 'retrieve_customer'],
-      requireApprovalForTools: ['delete_customer'],
+      requireApprovalForTools: ['@write', 'delete_customer'],
     },
     {
       name: 'acme-vectors',
       enableTools: ['delete_vectors', 'compact_index', 'search'],
-      requireApprovalForTools: ['delete_vectors', 'compact_index'],
+      requireApprovalForTools: ['@write', 'delete_vectors', 'compact_index'],
     },
   ],
   skills: ['vector-index-compaction'],

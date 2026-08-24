@@ -27,7 +27,10 @@ export interface McpServerBinding {
   /** Exceptions carved out of `enableTools`, applied after it resolves. */
   readonly disableTools?: readonly string[];
   /**
-   * Tools that pause for human approval before running.
+   * Tools that pause for human approval before running. Accepts names and the
+   * harness's selectors (`@all`, `@write`, `@destructive`); prefer a selector,
+   * because a name list gates the tools that existed when the spec was
+   * written while a selector gates whatever the connector grows later.
    *
    * Approval is a backstop, not the primary control. Where an agent has no
    * business writing at all, withhold the tools instead of gating them.
