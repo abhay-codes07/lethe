@@ -52,28 +52,55 @@ Measured against a shadow snapshot. Nothing has been touched.
 
 ---
 
-## Status
+## Quickstart
 
-Early development. The domain model, agent specifications, and legal rule packs are landing first; connectors and the simulation harness follow.
+Five commands from clone to a walked erasure request. Requires Node 20+,
+Docker, a running [TrueForge](https://github.com/truefoundry/trueforge)
+harness with a model key, and a read-only Postgres connector named
+`acme-postgres` pointed at the demo estate.
+
+```bash
+npm install
+docker compose -f demo/docker-compose.yml up -d   # the demo estate
+./demo/verify.sh                                  # prove it contains the hard cases
+TRUEFORGE_BASE_URL=http://localhost:8790 npm run smoke   # first live contact
+TRUEFORGE_BASE_URL=http://localhost:8790 npm run case -- DSR-1 ada@example.invalid
+```
+
+The last command walks one request end to end at the terminal: discovery
+fans out, the plan is measured against a copy, the erasure-plan card renders
+with every figure on it measured rather than estimated, and nothing is
+destroyed until you type `sign`. Refusing records the refusal — a refused
+erasure is itself a compliance event. After execution, a second sweep proves
+the erasure before the certificate is written.
 
 ## Repository layout
 
 ```
 src/
-  agents/      agent specifications — capability separation lives here
-  domain/      subjects, findings, erasure plans, certificates
-  skills/      instruction packs the agent loads on demand
+  domain/        subjects, findings, retention law, plans, certificates
+  agents/        agent specifications — capability separation lives here
+  connectors/    verifying declared bindings against the live tool list
+  harness/       protocol, event assembly, SSE, the wire format
+  discovery/     the fan-out, and adversarial parsing of what comes back
+  simulation/    measuring the plan against a copy before anyone signs
+  review/        the plan card, and reconciling calls against the signed plan
+  execution/     running the plan, answering gates mechanically
+  verification/  the proving sweep, and certificate issuance
+  suppression/   the ledger that stops a backup restore undoing an erasure
+  lifecycle/     the case file and its legal state machine
+  cli/           the runbook
+  smoke/         first-contact diagnostics against a live harness
+demo/            a seeded estate shaped around what makes erasure hard
 ```
 
 ## Development
 
 ```bash
-npm install
-npm run typecheck
-npm test
+npm run typecheck   # tests included; a test that does not compile proves nothing
+npm test            # 380+ tests, all against injected fakes — no network, no Docker
+npm run build       # emits dist/ without the tests
 ```
-
-Requires Node 20+.
 
 ## License
 
