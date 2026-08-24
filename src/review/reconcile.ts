@@ -181,9 +181,16 @@ export function reconcile(
 
   const plannedScopes = new Map<ScopeKey, PlannedAction>();
   for (const action of plan.actions) {
-    // Retained and escalated data is not to be touched, so a call against it
-    // is a scope violation rather than an authorised one.
-    if (action.disposition === 'retain' || action.disposition === 'escalate') continue;
+    // Retained, escalated and unerasable data is not to be touched, so a call
+    // against it is a scope violation rather than an authorised one. For
+    // unerasable especially: the disposition exists because no tool call can
+    // erase it, so any tool call claiming to is wrong about something.
+    if (
+      action.disposition === 'retain' ||
+      action.disposition === 'escalate' ||
+      action.disposition === 'unerasable'
+    )
+      continue;
 
     const finding = findingById.get(action.findingId);
     if (!finding) continue;

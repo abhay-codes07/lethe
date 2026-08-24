@@ -34,6 +34,8 @@ export interface PlanCardLine {
   readonly justification: string;
   readonly citation?: string;
   readonly irreversible: boolean;
+  /** For `unerasable`: the committed path out, shown on its own line. */
+  readonly remediation?: string;
 }
 
 export interface PlanCard {
@@ -115,6 +117,9 @@ export function renderPlanCard(
       justification: action.justification,
       ...(action.citation !== undefined ? { citation: action.citation } : {}),
       irreversible: action.irreversible,
+      ...(action.remediation !== undefined
+        ? { remediation: `${action.remediation.action} by ${action.remediation.plannedAt}` }
+        : {}),
     };
   });
 
@@ -148,8 +153,11 @@ const DISPOSITION_ORDER: Record<Disposition, number> = {
   delete_and_compact: 0,
   delete: 1,
   anonymise: 2,
-  retain: 3,
-  escalate: 4,
+  // Above retain: "we cannot erase this" is the line most likely to change a
+  // signer's mind, and must not be buried under routine retentions.
+  unerasable: 3,
+  retain: 4,
+  escalate: 5,
 };
 
 function sortForReading(lines: readonly PlanCardLine[]): readonly PlanCardLine[] {
@@ -166,6 +174,7 @@ const DISPOSITION_LABEL: Record<Disposition, string> = {
   delete: 'DELETE',
   delete_and_compact: 'PURGE',
   anonymise: 'ANONYMISE',
+  unerasable: 'UNERASABLE',
   retain: 'RETAIN',
   escalate: 'ESCALATE',
 };
@@ -189,7 +198,8 @@ export function formatPlanCard(card: PlanCard): string {
     const head = `  ${label} ${formatCount(line.count)} — ${line.system}: ${line.location}`;
     const detail = `             ${line.justification}`;
     const citation = line.citation ? [`             Basis: ${line.citation}`] : [];
-    return [head, detail, ...citation, ''];
+    const remediation = line.remediation ? [`             Remediation: ${line.remediation}`] : [];
+    return [head, detail, ...citation, ...remediation, ''];
   });
 
   const footer = [

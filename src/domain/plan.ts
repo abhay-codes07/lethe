@@ -26,7 +26,15 @@ export type Disposition =
   /** Delete, then run the follow-up that makes the delete actually stick. */
   | 'delete_and_compact'
   /** Refuse to decide by rule; put it in front of a person. */
-  | 'escalate';
+  | 'escalate'
+  /**
+   * Cannot be erased by any operation this system can perform — data baked
+   * into model weights being the canonical case. Machine unlearning does not
+   * reliably work, and pretending otherwise would put a false statement on
+   * the certificate. The honest product is the disclosure: what remains,
+   * why, and when remediation removes it from the world.
+   */
+  | 'unerasable';
 
 export interface PlannedAction {
   readonly findingId: string;
@@ -39,6 +47,21 @@ export interface PlannedAction {
   readonly citation?: string;
   /** Whether this action destroys data that cannot be recovered. */
   readonly irreversible: boolean;
+  /** Present only for `unerasable`: how and when the data leaves the world. */
+  readonly remediation?: Remediation;
+}
+
+/**
+ * The path by which unerasable data eventually stops existing.
+ *
+ * Mandatory wherever `unerasable` appears. A disclosure with no remediation
+ * is a shrug; "the model is retrained without this data on 2026-11-01" is a
+ * commitment someone can hold the controller to.
+ */
+export interface Remediation {
+  /** What will happen, e.g. "model retrained without the subject's data". */
+  readonly action: string;
+  readonly plannedAt: string;
 }
 
 /**
@@ -171,6 +194,7 @@ export interface PlanSummary {
   readonly anonymised: number;
   readonly retained: number;
   readonly escalated: number;
+  readonly unerasable: number;
   readonly irreversibleActions: number;
   readonly totalRecords: number;
 }
@@ -180,6 +204,7 @@ export function summarise(plan: ErasurePlan): PlanSummary {
   let anonymised = 0;
   let retained = 0;
   let escalated = 0;
+  let unerasable = 0;
   let irreversibleActions = 0;
 
   for (const action of plan.actions) {
@@ -197,6 +222,9 @@ export function summarise(plan: ErasurePlan): PlanSummary {
       case 'escalate':
         escalated += action.count;
         break;
+      case 'unerasable':
+        unerasable += action.count;
+        break;
     }
     if (action.irreversible) irreversibleActions += 1;
   }
@@ -206,8 +234,9 @@ export function summarise(plan: ErasurePlan): PlanSummary {
     anonymised,
     retained,
     escalated,
+    unerasable,
     irreversibleActions,
-    totalRecords: deleted + anonymised + retained + escalated,
+    totalRecords: deleted + anonymised + retained + escalated + unerasable,
   };
 }
 
@@ -266,6 +295,68 @@ export function assertApprovable(plan: ErasurePlan): void {
 /** Records that would be destroyed unrecoverably. The number that matters most. */
 export function irreversibleRecordCount(plan: ErasurePlan): number {
   return plan.actions.filter((a) => a.irreversible).reduce((sum, a) => sum + a.count, 0);
+}
+
+/**
+ * Convert one planned action into an unerasable disclosure.
+ *
+ * Not produced by `draftPlan`: recognising that a finding lives in model
+ * weights takes information the rules do not have, so the marking is an
+ * explicit decision by whoever (or whatever) knows the artefact — with the
+ * basis and the remediation both mandatory.
+ *
+ * The returned plan is demoted to `draft`. Any edit to a plan invalidates
+ * its simulation: the blast radius was measured for a different set of
+ * actions, and carrying it forward would let a person sign figures that no
+ * longer describe the plan in front of them.
+ */
+export function markUnerasable(
+  plan: ErasurePlan,
+  findingId: string,
+  basis: string,
+  remediation: Remediation,
+  now = new Date().toISOString(),
+): ErasurePlan {
+  if (plan.status !== 'draft' && plan.status !== 'simulated') {
+    throw new Error(
+      `cannot mark a finding unerasable on a ${plan.status} plan; the decision ` +
+        'belongs before approval, not after.',
+    );
+  }
+  if (!basis.trim()) {
+    throw new Error('an unerasable marking needs a basis; it is a disclosure, not a shrug');
+  }
+  if (!remediation.action.trim()) {
+    throw new Error('remediation must say what will happen to the data');
+  }
+  if (Number.isNaN(Date.parse(remediation.plannedAt)) || Date.parse(remediation.plannedAt) <= Date.parse(now)) {
+    throw new Error(
+      'remediation must be planned for a future date; a past one claims the ' +
+        'data is already gone, which contradicts marking it unerasable.',
+    );
+  }
+
+  const target = plan.actions.find((action) => action.findingId === findingId);
+  if (!target) {
+    throw new Error(`plan has no action for finding ${findingId}`);
+  }
+
+  const actions = plan.actions.map((action) =>
+    action.findingId === findingId
+      ? {
+          findingId: action.findingId,
+          disposition: 'unerasable' as const,
+          count: action.count,
+          justification: basis,
+          irreversible: false,
+          remediation,
+        }
+      : action,
+  );
+
+  // Demoted deliberately: the blast radius on this plan was measured for a
+  // different set of actions.
+  return { ...plan, actions, status: 'draft' };
 }
 
 export { totalRecords };
