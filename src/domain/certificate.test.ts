@@ -236,7 +236,7 @@ describe('certificateTotals', () => {
       }),
     );
 
-    assert.deepEqual(certificateTotals(certificate), { erased: 10, anonymised: 4, retained: 7 });
+    assert.deepEqual(certificateTotals(certificate), { erased: 10, anonymised: 4, retained: 7, unerasable: 0 });
   });
 });
 

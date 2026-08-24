@@ -167,6 +167,8 @@ export interface CertificateEntry {
   readonly justification: string;
   /** True once the follow-up that makes a delete stick has run. */
   readonly irrecoverable: boolean;
+  /** For `unerasable`: the committed remediation, e.g. a retraining date. */
+  readonly remediation?: string;
 }
 
 export interface Approval {
@@ -354,6 +356,19 @@ export function issueCertificate(input: CertificateInput, now = new Date().toISO
     );
   }
 
+  // An unerasable disclosure with no committed way out is a shrug, and a
+  // shrug on a compliance document is worse than the omission it papers over.
+  const shrugs = entries.filter(
+    (entry) => entry.disposition === 'unerasable' && !entry.remediation?.trim(),
+  );
+  if (shrugs.length > 0) {
+    throw new Error(
+      `cannot certify request ${input.requestId}: ${shrugs.length} unerasable ` +
+        'entr(y/ies) carry no remediation. The disclosure must say when and how ' +
+        'the data leaves the world.',
+    );
+  }
+
   const chain = verifyChain(events);
   if (!chain.valid) {
     throw new Error(
@@ -386,10 +401,12 @@ export function certificateTotals(certificate: Certificate): {
   readonly erased: number;
   readonly anonymised: number;
   readonly retained: number;
+  readonly unerasable: number;
 } {
   let erased = 0;
   let anonymised = 0;
   let retained = 0;
+  let unerasable = 0;
 
   for (const entry of certificate.entries) {
     switch (entry.disposition) {
@@ -405,8 +422,11 @@ export function certificateTotals(certificate: Certificate): {
         break;
       case 'escalate':
         break;
+      case 'unerasable':
+        unerasable += entry.recordsAffected;
+        break;
     }
   }
 
-  return { erased, anonymised, retained };
+  return { erased, anonymised, retained, unerasable };
 }
