@@ -35,7 +35,7 @@ describe('HttpToolCatalog', () => {
       fetch: fakeFetch([
         {
           json: {
-            tools: [
+            data: [
               { name: 'query', annotations: { readOnlyHint: true } },
               { name: 'delete_rows', annotations: { destructiveHint: true } },
             ],
@@ -55,7 +55,7 @@ describe('HttpToolCatalog', () => {
   it('trusts only boolean annotations', async () => {
     const catalog = new HttpToolCatalog({
       baseUrl: 'http://harness.test',
-      fetch: fakeFetch([{ json: { tools: [{ name: 'query', annotations: { readOnlyHint: 'true' } }] } }]),
+      fetch: fakeFetch([{ json: { data: [{ name: 'query', annotations: { readOnlyHint: 'true' } }] } }]),
     });
 
     const tools = await catalog.listTools('db');
@@ -67,7 +67,7 @@ describe('HttpToolCatalog', () => {
   it('skips entries with no usable name', async () => {
     const catalog = new HttpToolCatalog({
       baseUrl: 'http://harness.test',
-      fetch: fakeFetch([{ json: { tools: [{ name: '' }, { description: 'orphan' }, { name: 'query' }] } }]),
+      fetch: fakeFetch([{ json: { data: [{ name: '' }, { description: 'orphan' }, { name: 'query' }] } }]),
     });
 
     assert.deepEqual((await catalog.listTools('db')).map((t) => t.name), ['query']);
@@ -81,7 +81,7 @@ describe('HttpToolCatalog', () => {
       fetch: fakeFetch([{ json: { servers: [] } }]),
     });
 
-    await assert.rejects(catalog.listTools('db'), /expected a "tools" array/);
+    await assert.rejects(catalog.listTools('db'), /expected a "data" array/);
   });
 
   it('reports the status and explanation on failure', async () => {
@@ -98,7 +98,7 @@ describe('HttpToolCatalog', () => {
     const catalog = new HttpToolCatalog({
       baseUrl: 'http://harness.test',
       apiKey: 'secret-key',
-      fetch: fakeFetch([{ json: { tools: [{ name: 'query' }] } }], captured),
+      fetch: fakeFetch([{ json: { data: [{ name: 'query' }] } }], captured),
     });
 
     await catalog.listTools('db');
@@ -111,7 +111,7 @@ describe('HttpToolCatalog', () => {
     const captured: { url: string; headers: Record<string, string> }[] = [];
     const catalog = new HttpToolCatalog({
       baseUrl: 'http://harness.test',
-      fetch: fakeFetch([{ json: { tools: [{ name: 'query' }] } }], captured),
+      fetch: fakeFetch([{ json: { data: [{ name: 'query' }] } }], captured),
     });
 
     await catalog.listTools('db');
@@ -124,7 +124,7 @@ describe('HttpToolCatalog', () => {
     const captured: { url: string; headers: Record<string, string> }[] = [];
     const catalog = new HttpToolCatalog({
       baseUrl: 'http://harness.test',
-      fetch: fakeFetch([{ json: { tools: [{ name: 'query' }] } }], captured),
+      fetch: fakeFetch([{ json: { data: [{ name: 'query' }] } }], captured),
     });
 
     await catalog.listTools('db/../admin');

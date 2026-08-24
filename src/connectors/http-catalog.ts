@@ -22,7 +22,8 @@ interface RawTool {
 }
 
 interface ToolListResponse {
-  readonly tools?: readonly RawTool[];
+  /** Per the API reference: MCP tools/list entries, verbatim, under `data`. */
+  readonly data?: readonly RawTool[];
 }
 
 export class HttpToolCatalog implements ToolCatalog {
@@ -72,16 +73,16 @@ export class HttpToolCatalog implements ToolCatalog {
 
     const body = (await response.json()) as ToolListResponse;
 
-    // A response with no tools array is a shape we did not expect, not a
+    // A response with no data array is a shape we did not expect, not a
     // connector with no tools. Conflating them would turn a protocol mismatch
     // into a confident statement about somebody's data.
-    if (!Array.isArray(body.tools)) {
+    if (!Array.isArray(body.data)) {
       throw new Error(
-        `harness returned no tool list for ${serverName}; expected a "tools" array`,
+        `harness returned no tool list for ${serverName}; expected a "data" array`,
       );
     }
 
-    const tools = body.tools.map(toDescriptor).filter((tool): tool is ToolDescriptor => tool !== undefined);
+    const tools = body.data.map(toDescriptor).filter((tool): tool is ToolDescriptor => tool !== undefined);
     this.#cache.set(serverName, tools);
 
     return tools;

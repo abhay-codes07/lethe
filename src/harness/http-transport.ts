@@ -16,9 +16,10 @@
  * error rather than as a tidy end of iteration.
  */
 
-import type { ReceivedEvent, TurnEvent, TurnInput } from './protocol.ts';
+import type { ReceivedEvent, TurnInput } from './protocol.ts';
 import { SseParser } from './sse.ts';
 import type { Transport, TurnState } from './transport.ts';
+import { mapWireStatus, toWireInput, WireTranslator } from './wire.ts';
 
 export interface HttpTransportOptions {
   /** Base URL of the harness, e.g. `http://localhost:3000`. */
@@ -88,7 +89,7 @@ export class HttpTransport implements Transport {
   createTurn(sessionId: string, input: readonly TurnInput[]): AsyncIterable<ReceivedEvent> {
     return this.#stream(routes.turns(sessionId), {
       method: 'POST',
-      body: JSON.stringify({ input }),
+      body: JSON.stringify({ input: toWireInput(input) }),
     });
   }
 
@@ -97,13 +98,17 @@ export class HttpTransport implements Transport {
     turnId: string,
     afterSequence?: number,
   ): AsyncIterable<ReceivedEvent> {
-    // Last-Event-ID is the standard mechanism and the one the harness honours
-    // on reconnect, so the sequence number travels as a header rather than a
-    // query parameter.
-    const headers: Record<string, string> =
-      afterSequence === undefined ? {} : { 'Last-Event-ID': String(afterSequence) };
+    // Per the API reference the resume cursor is the `after_sequence_number`
+    // query parameter -- exclusive, replaying only events after it. The first
+    // version of this client sent Last-Event-ID instead, which the endpoint
+    // ignores, so every reconnect would have replayed the whole turn and
+    // double-applied deltas onto partial state.
+    const path =
+      afterSequence === undefined
+        ? routes.subscribe(sessionId, turnId)
+        : `${routes.subscribe(sessionId, turnId)}?after_sequence_number=${afterSequence}`;
 
-    return this.#stream(routes.subscribe(sessionId, turnId), { method: 'GET', headers });
+    return this.#stream(path, { method: 'GET' });
   }
 
   listTurnEvents(sessionId: string, turnId: string): AsyncIterable<ReceivedEvent> {
@@ -118,14 +123,18 @@ export class HttpTransport implements Transport {
 
     await assertOk(response, 'get turn');
 
-    const body = (await response.json()) as { turnId?: string; state?: { status?: string } };
+    const body = (await response.json()) as {
+      turn_id?: string;
+      turnId?: string;
+      state?: { status?: string };
+    };
     const status = body.state?.status;
 
     if (!status) {
       throw new Error(`harness returned a turn with no status for ${turnId}`);
     }
 
-    return { turnId: body.turnId ?? turnId, status: status as TurnState['status'] };
+    return { turnId: body.turn_id ?? body.turnId ?? turnId, status: mapWireStatus(status) };
   }
 
   #url(path: string): string {
@@ -164,11 +173,13 @@ export class HttpTransport implements Transport {
 
       const parser = new SseParser();
       const decoder = new TextDecoder();
+      // Per-stream, because the wire's turn.done does not repeat the turn id.
+      const translator = new WireTranslator();
 
       for await (const chunk of response.body) {
         const text = decoder.decode(chunk, { stream: true });
         for (const frame of parser.push(text)) {
-          const event = toReceivedEvent(frame.data, frame.id);
+          const event = toReceivedEvent(frame.data, frame.id, translator);
           if (event) yield event;
         }
       }
@@ -177,7 +188,7 @@ export class HttpTransport implements Transport {
       // disproportionately likely to be the turn.done or the approval request
       // the run is now waiting on.
       for (const frame of parser.flush()) {
-        const event = toReceivedEvent(frame.data, frame.id);
+        const event = toReceivedEvent(frame.data, frame.id, translator);
         if (event) yield event;
       }
     } finally {
@@ -190,11 +201,16 @@ export class HttpTransport implements Transport {
  * Turn one frame's payload into an event.
  *
  * Returns undefined for the stream's own control frames — a `[DONE]` sentinel
- * or a keep-alive — which carry no event. A malformed payload throws, because
- * skipping it would silently drop an approval request and leave the run
- * looking stalled rather than broken.
+ * or a keep-alive — and for wire-only event types the internal protocol does
+ * not use. A malformed payload throws, because skipping it would silently
+ * drop an approval request and leave the run looking stalled rather than
+ * broken.
  */
-function toReceivedEvent(data: string, id: string | undefined): ReceivedEvent | undefined {
+function toReceivedEvent(
+  data: string,
+  id: string | undefined,
+  translator: WireTranslator,
+): ReceivedEvent | undefined {
   const trimmed = data.trim();
   if (trimmed === '' || trimmed === '[DONE]') return undefined;
 
@@ -205,16 +221,8 @@ function toReceivedEvent(data: string, id: string | undefined): ReceivedEvent | 
     throw new Error(`harness sent a frame that is not JSON: ${truncate(trimmed)}`);
   }
 
-  if (typeof parsed !== 'object' || parsed === null || !('type' in parsed)) {
-    throw new Error(`harness sent a frame with no event type: ${truncate(trimmed)}`);
-  }
-
   const sequence = id === undefined ? undefined : Number(id);
-
-  return {
-    event: parsed as TurnEvent,
-    ...(sequence !== undefined && Number.isFinite(sequence) ? { sequence } : {}),
-  };
+  return translator.translate(parsed, sequence !== undefined && Number.isFinite(sequence) ? sequence : undefined);
 }
 
 async function assertOk(response: Response, what: string): Promise<void> {
