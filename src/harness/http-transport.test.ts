@@ -55,9 +55,10 @@ async function collect(stream: AsyncIterable<ReceivedEvent>): Promise<ReceivedEv
   return events;
 }
 
+// Documented wire format: snake_case fields, status nested under state.
 const TURN_STREAM = [
-  'id: 1\nevent: turn.created\ndata: {"type":"turn.created","id":"e1","turnId":"t1"}\n\n',
-  'id: 2\nevent: turn.done\ndata: {"type":"turn.done","id":"e2","turnId":"t1","status":"completed"}\n\n',
+  'id: 1\nevent: turn.created\ndata: {"type":"turn.created","id":"e1","turn_id":"t1"}\n\n',
+  'id: 2\nevent: turn.done\ndata: {"type":"turn.done","id":"e2","state":{"status":"done"}}\n\n',
 ];
 
 describe('HttpTransport streaming', () => {
@@ -74,13 +75,17 @@ describe('HttpTransport streaming', () => {
     assert.equal(events[0]?.event.type, 'turn.created');
     assert.equal(events[0]?.sequence, 1);
     assert.equal(events[1]?.sequence, 2);
+    // Translated into the internal protocol: flat status, turn id remembered.
+    const done = events[1]?.event;
+    assert.equal(done?.type === 'turn.done' && done.status, 'completed');
+    assert.equal(done?.type === 'turn.done' && done.turnId, 't1');
   });
 
   it('survives a payload split across network chunks', async () => {
     const transport = new HttpTransport({
       baseUrl: 'http://harness.test',
       fetch: fakeFetch(
-        ['id: 1\nevent: turn.cre', 'ated\ndata: {"type":"turn.crea', 'ted","id":"e1","turnId":"t1"}\n\n'],
+        ['id: 1\nevent: turn.cre', 'ated\ndata: {"type":"turn.crea', 'ted","id":"e1","turn_id":"t1"}\n\n'],
         [],
       ),
     });
@@ -95,7 +100,7 @@ describe('HttpTransport streaming', () => {
     const transport = new HttpTransport({
       baseUrl: 'http://harness.test',
       fetch: fakeFetch(
-        ['data: {"type":"turn.done","id":"e2","turnId":"t1","status":"completed"}'],
+        ['data: {"type":"turn.done","id":"e2","state":{"status":"done"}}'],
         [],
       ),
     });
@@ -107,7 +112,7 @@ describe('HttpTransport streaming', () => {
     const transport = new HttpTransport({
       baseUrl: 'http://harness.test',
       fetch: fakeFetch(
-        [': keep-alive\n\n', 'data: {"type":"turn.done","id":"e","turnId":"t1","status":"completed"}\n\n', 'data: [DONE]\n\n'],
+        [': keep-alive\n\n', 'data: {"type":"turn.done","id":"e","state":{"status":"done"}}\n\n', 'data: [DONE]\n\n'],
         [],
       ),
     });
@@ -132,7 +137,26 @@ describe('HttpTransport streaming', () => {
       fetch: fakeFetch(['data: {"id":"e1"}\n\n'], []),
     });
 
-    await assert.rejects(collect(transport.listTurnEvents('sess-1', 't1')), /no event type/);
+    await assert.rejects(collect(transport.listTurnEvents('sess-1', 't1')), /no type/);
+  });
+
+  // Lifecycle events the internal protocol has no use for are dropped at the
+  // boundary, not surfaced to consumers.
+  it('drops wire-only lifecycle events', async () => {
+    const transport = new HttpTransport({
+      baseUrl: 'http://harness.test',
+      fetch: fakeFetch(
+        [
+          'data: {"type":"thread.created","id":"th1","thread_id":"t"}\n\n',
+          'data: {"type":"sandbox.created","id":"sb1"}\n\n',
+          'data: {"type":"turn.done","id":"e","state":{"status":"done"}}\n\n',
+        ],
+        [],
+      ),
+    });
+
+    const events = await collect(transport.listTurnEvents('sess-1', 't1'));
+    assert.deepEqual(events.map((e) => e.event.type), ['turn.done']);
   });
 });
 
@@ -164,7 +188,9 @@ describe('HttpTransport requests', () => {
     assert.ok(!captured[0]?.url.includes('secret-key'), 'key must not reach the URL');
   });
 
-  it('resumes with Last-Event-ID', async () => {
+  // The documented resume cursor. The first version sent Last-Event-ID, which
+  // the endpoint ignores — every reconnect would have replayed the whole turn.
+  it('resumes with the after_sequence_number query parameter', async () => {
     const captured: Captured[] = [];
     const transport = new HttpTransport({
       baseUrl: 'http://harness.test',
@@ -173,10 +199,10 @@ describe('HttpTransport requests', () => {
 
     await collect(transport.subscribeToTurn('sess-1', 't1', 42));
 
-    assert.equal(captured[0]?.headers['Last-Event-ID'], '42');
+    assert.match(captured[0]?.url ?? '', /\/subscribe\?after_sequence_number=42$/);
   });
 
-  it('omits Last-Event-ID when starting fresh', async () => {
+  it('omits the cursor when starting fresh', async () => {
     const captured: Captured[] = [];
     const transport = new HttpTransport({
       baseUrl: 'http://harness.test',
@@ -185,7 +211,7 @@ describe('HttpTransport requests', () => {
 
     await collect(transport.subscribeToTurn('sess-1', 't1'));
 
-    assert.equal(captured[0]?.headers['Last-Event-ID'], undefined);
+    assert.ok(!captured[0]?.url.includes('after_sequence_number'), captured[0]?.url);
   });
 
   it('trims a trailing slash so paths do not double up', async () => {
@@ -226,13 +252,13 @@ describe('HttpTransport errors', () => {
     );
   });
 
-  it('reads a turn state', async () => {
+  it('reads a turn state and maps the wire status', async () => {
     const transport = new HttpTransport({
       baseUrl: 'http://harness.test',
-      fetch: fakeFetch([], [], { json: { turnId: 't1', state: { status: 'paused' } } }),
+      fetch: fakeFetch([], [], { json: { turn_id: 't1', state: { status: 'done' } } }),
     });
 
-    assert.deepEqual(await transport.getTurn('sess-1', 't1'), { turnId: 't1', status: 'paused' });
+    assert.deepEqual(await transport.getTurn('sess-1', 't1'), { turnId: 't1', status: 'completed' });
   });
 
   it('rejects a turn state with no status rather than guessing', async () => {
