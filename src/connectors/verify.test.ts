@@ -234,3 +234,59 @@ describe('the shipped agents against a well-behaved catalog', () => {
     assert.equal(isFatal(report), false, JSON.stringify(report.violations));
   });
 });
+
+describe('selector gates', () => {
+  // The likeliest real failure, structurally closed: a name list gates the
+  // tools that existed when the spec was written; @write gates whatever the
+  // connector grows later.
+  it('@write covers a destructive tool the spec never named', async () => {
+    const report = await verifyAgent(
+      specWith([{ name: 'db', enableTools: '@all', requireApprovalForTools: ['@write'] }]),
+      catalogOf({ db: [writeTool('delete_rows'), writeTool('truncate_table')] }),
+      false,
+    );
+
+    assert.equal(isFatal(report), false, JSON.stringify(report.violations));
+  });
+
+  it('@destructive covers only tools annotated destructive', async () => {
+    const report = await verifyAgent(
+      specWith([{ name: 'db', enableTools: '@all', requireApprovalForTools: ['@destructive'] }]),
+      catalogOf({
+        db: [
+          writeTool('delete_rows'),
+          // Write-but-not-destructive: readOnlyHint explicitly false.
+          { name: 'update_row', annotations: { readOnlyHint: false } },
+        ],
+      }),
+      false,
+    );
+
+    assert.equal(isFatal(report), true);
+    assert.equal(report.violations[0]?.tool, 'update_row');
+  });
+
+  // Whether the harness would gate an unannotated tool is the server
+  // operator's annotation call; assuming a gate that might not fire is the
+  // unsafe direction.
+  it('an unannotated mutating tool is not assumed covered by @write', async () => {
+    const report = await verifyAgent(
+      specWith([{ name: 'db', enableTools: '@all', requireApprovalForTools: ['@write'] }]),
+      catalogOf({ db: [{ name: 'mystery_op' }] }),
+      false,
+    );
+
+    assert.equal(isFatal(report), true);
+    assert.equal(report.violations[0]?.tool, 'mystery_op');
+  });
+
+  it('@all covers everything, unannotated included', async () => {
+    const report = await verifyAgent(
+      specWith([{ name: 'db', enableTools: '@all', requireApprovalForTools: ['@all'] }]),
+      catalogOf({ db: [{ name: 'mystery_op' }, writeTool('delete_rows')] }),
+      false,
+    );
+
+    assert.equal(isFatal(report), false);
+  });
+});
