@@ -23,6 +23,7 @@
 
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
+import { restrictToSystems } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { verifyAgent } from '../connectors/verify.ts';
 import type { AgentSpec } from '../agents/spec.ts';

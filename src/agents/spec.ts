@@ -138,3 +138,40 @@ export const BASE_CONFIG: AgentConfig = {
   },
   iterationLimit: 100,
 };
+
+/**
+ * Restrict an agent to a subset of its declared systems.
+ *
+ * Exists because verification treats an unreachable connector as fatal — an
+ * unverifiable connector is not a safe one — which means the full spec only
+ * runs when all five demo systems are stood up. A first run with one Postgres
+ * should be one command, not five servers, so the run scope is narrowed
+ * explicitly here rather than by weakening the fatality rule.
+ *
+ * The narrowing is honest downstream: the certificate's scope section lists
+ * the systems that were actually declared for the run, so a one-system sweep
+ * certifies exactly a one-system sweep.
+ */
+export function restrictToSystems(spec: AgentSpec, systems: readonly string[]): AgentSpec {
+  const keep = new Set(systems);
+  const mcpServers = spec.mcpServers.filter((binding) => keep.has(binding.name));
+
+  if (mcpServers.length === 0) {
+    throw new Error(
+      `restricting ${spec.name} to [${systems.join(', ')}] leaves no connectors; ` +
+        'an agent that can reach nothing has nothing to do.',
+    );
+  }
+
+  const unknown = systems.filter((name) => !spec.mcpServers.some((b) => b.name === name));
+  if (unknown.length > 0) {
+    // A typo here would silently narrow the sweep and the certificate would
+    // honestly attest to the narrower scope — correct, but not what was meant.
+    throw new Error(
+      `${spec.name} declares no connector named: ${unknown.join(', ')}. ` +
+        `Declared: ${spec.mcpServers.map((b) => b.name).join(', ')}.`,
+    );
+  }
+
+  return { ...spec, mcpServers };
+}

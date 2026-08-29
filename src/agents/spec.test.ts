@@ -8,6 +8,7 @@ import {
   assertReadOnly,
   BASE_CONFIG,
   bindingIsReadOnly,
+  restrictToSystems,
   type AgentSpec,
 } from './spec.ts';
 
@@ -137,5 +138,25 @@ describe('the shipped agents', () => {
   it('both agents have the sandbox available for simulation and skills', () => {
     assert.equal(scoutAgent.config.sandbox.enabled, true);
     assert.equal(executorAgent.config.sandbox.enabled, true);
+  });
+});
+
+describe('restrictToSystems', () => {
+  it('keeps only the named connectors, invariants intact', () => {
+    const scoped = restrictToSystems(scoutAgent, ['acme-postgres']);
+    assert.equal(scoped.mcpServers.length, 1);
+    assert.equal(scoped.mcpServers[0]?.name, 'acme-postgres');
+    // The narrowing must never weaken the safety property.
+    assert.doesNotThrow(() => assertReadOnly(scoped));
+  });
+
+  it('refuses to narrow to nothing', () => {
+    assert.throws(() => restrictToSystems(scoutAgent, []), /no connectors/);
+  });
+
+  // A typo would silently narrow the sweep; the certificate would honestly
+  // attest to the narrower scope — correct, but not what was meant.
+  it('refuses a system the spec never declared', () => {
+    assert.throws(() => restrictToSystems(scoutAgent, ['acme-postgres', 'acme-postgress']), /no connector named: acme-postgress/);
   });
 });
