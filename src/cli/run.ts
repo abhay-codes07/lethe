@@ -19,6 +19,7 @@ import { writeFile } from 'node:fs/promises';
 import { executorAgent } from '../agents/executor.ts';
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
+import { restrictToSystems } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { generateSubjectSalt } from '../domain/certificate.ts';
 import type { Identifier } from '../domain/identity.ts';
@@ -73,6 +74,14 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const apiKey = process.env['TRUEFORGE_API_KEY'];
 
+  // LETHE_SYSTEMS narrows both agents to the connectors that exist for this
+  // run. The certificate's scope section reflects the narrowing honestly.
+  const systems = process.env['LETHE_SYSTEMS']?.split(',').map((s) => s.trim());
+  const scout = systems ? restrictToSystems(scoutAgent, systems) : scoutAgent;
+  const executor = systems
+    ? restrictToSystems(executorAgent, systems.filter((name) => executorAgent.mcpServers.some((b) => b.name === name)))
+    : executorAgent;
+
   const shared = { baseUrl, ...(apiKey ? { apiKey } : {}) };
   const transport = new HttpTransport(shared);
   const catalog = new HttpToolCatalog(shared);
@@ -94,8 +103,8 @@ async function main(): Promise<void> {
   // the harness runs is exactly the object the startup assertions checked.
   const asManifest = (spec: typeof scoutAgent) =>
     toManifest(spec) as unknown as Readonly<Record<string, unknown>>;
-  const scoutSession = await transport.createSession(asManifest(scoutAgent));
-  const executorSession = await transport.createSession(asManifest(executorAgent));
+  const scoutSession = await transport.createSession(asManifest(scout));
+  const executorSession = await transport.createSession(asManifest(executor));
 
   try {
     // 1 — discovery, with identity questions answered by the person running this.
@@ -104,7 +113,7 @@ async function main(): Promise<void> {
       caseFile,
       transport,
       catalog,
-      scout: scoutAgent,
+      scout,
       sessionId: scoutSession,
       seeds: [seed],
       responder: {
@@ -128,7 +137,7 @@ async function main(): Promise<void> {
       caseFile,
       transport,
       catalog,
-      scout: scoutAgent,
+      scout,
       sessionId: scoutSession,
     });
 
@@ -165,7 +174,7 @@ async function main(): Promise<void> {
       caseFile,
       transport,
       catalog,
-      executor: executorAgent,
+      executor,
       sessionId: executorSession,
       ledger,
       backupRotatesAt: rotationDate(new Date()),
@@ -181,7 +190,7 @@ async function main(): Promise<void> {
       caseFile,
       transport,
       catalog,
-      scout: scoutAgent,
+      scout,
       sessionId: scoutSession,
       ledger,
       subjectSalt,
