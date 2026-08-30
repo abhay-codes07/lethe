@@ -90,7 +90,7 @@ describe('HttpTransport streaming', () => {
       ),
     });
 
-    const events = await collect(transport.listTurnEvents('sess-1', 't1'));
+    const events = await collect(transport.subscribeToTurn('sess-1', 't1'));
 
     assert.equal(events.length, 1);
     assert.equal(events[0]?.event.type, 'turn.created');
@@ -105,7 +105,7 @@ describe('HttpTransport streaming', () => {
       ),
     });
 
-    assert.equal((await collect(transport.listTurnEvents('sess-1', 't1'))).length, 1);
+    assert.equal((await collect(transport.subscribeToTurn('sess-1', 't1'))).length, 1);
   });
 
   it('ignores keep-alives and the done sentinel', async () => {
@@ -117,7 +117,7 @@ describe('HttpTransport streaming', () => {
       ),
     });
 
-    assert.equal((await collect(transport.listTurnEvents('sess-1', 't1'))).length, 1);
+    assert.equal((await collect(transport.subscribeToTurn('sess-1', 't1'))).length, 1);
   });
 
   // Skipping it would drop an approval request and leave the run looking
@@ -128,7 +128,7 @@ describe('HttpTransport streaming', () => {
       fetch: fakeFetch(['data: {not json\n\n'], []),
     });
 
-    await assert.rejects(collect(transport.listTurnEvents('sess-1', 't1')), /not JSON/);
+    await assert.rejects(collect(transport.subscribeToTurn('sess-1', 't1')), /not JSON/);
   });
 
   it('throws on a frame carrying no event type', async () => {
@@ -137,7 +137,7 @@ describe('HttpTransport streaming', () => {
       fetch: fakeFetch(['data: {"id":"e1"}\n\n'], []),
     });
 
-    await assert.rejects(collect(transport.listTurnEvents('sess-1', 't1')), /no type/);
+    await assert.rejects(collect(transport.subscribeToTurn('sess-1', 't1')), /no type/);
   });
 
   // Lifecycle events the internal protocol has no use for are dropped at the
@@ -155,7 +155,7 @@ describe('HttpTransport streaming', () => {
       ),
     });
 
-    const events = await collect(transport.listTurnEvents('sess-1', 't1'));
+    const events = await collect(transport.subscribeToTurn('sess-1', 't1'));
     assert.deepEqual(events.map((e) => e.event.type), ['turn.done']);
   });
 });
@@ -182,7 +182,7 @@ describe('HttpTransport requests', () => {
       fetch: fakeFetch(TURN_STREAM, captured),
     });
 
-    await collect(transport.listTurnEvents('sess-1', 't1'));
+    await collect(transport.subscribeToTurn('sess-1', 't1'));
 
     assert.equal(captured[0]?.headers['authorization'], 'Bearer secret-key');
     assert.ok(!captured[0]?.url.includes('secret-key'), 'key must not reach the URL');
@@ -221,7 +221,7 @@ describe('HttpTransport requests', () => {
       fetch: fakeFetch(TURN_STREAM, captured),
     });
 
-    await collect(transport.listTurnEvents('sess-1', 't1'));
+    await collect(transport.subscribeToTurn('sess-1', 't1'));
 
     assert.ok(!captured[0]?.url.includes('//api'), captured[0]?.url);
   });
@@ -233,7 +233,7 @@ describe('HttpTransport requests', () => {
       fetch: fakeFetch(TURN_STREAM, captured),
     });
 
-    await collect(transport.listTurnEvents('sess/../admin', 't1'));
+    await collect(transport.subscribeToTurn('sess/../admin', 't1'));
 
     assert.ok(!captured[0]?.url.includes('/../'), captured[0]?.url);
   });
@@ -247,7 +247,7 @@ describe('HttpTransport errors', () => {
     });
 
     await assert.rejects(
-      collect(transport.listTurnEvents('sess-1', 't1')),
+      collect(transport.subscribeToTurn('sess-1', 't1')),
       /503 Service Unavailable — sandbox unavailable/,
     );
   });
@@ -321,5 +321,54 @@ describe('HttpTransport.createSession', () => {
     });
 
     await assert.rejects(transport.createSession({}), /422 Unprocessable — bad manifest/);
+  });
+});
+
+describe('HttpTransport.listTurnEvents', () => {
+  // Observed live: the events endpoint returns JSON, not an event-stream.
+  // Piping JSON through the SSE parser yields zero frames — a silent empty
+  // replay, which is how a lost reply stayed lost on the first live run.
+  it('replays a JSON event list through the translator', async () => {
+    const transport = new HttpTransport({
+      baseUrl: 'http://harness.test',
+      fetch: fakeFetch([], [], {
+        json: {
+          data: [
+            { type: 'turn.created', id: 'c1', turn_id: 't1' },
+            { type: 'model.message', id: 'm1', thread_id: 'th', content: '{"findings":[]}' },
+            { type: 'turn.done', id: 'd1', state: { status: 'done' } },
+          ],
+        },
+      }),
+    });
+
+    const events = await collect(transport.listTurnEvents('sess-1', 't1'));
+
+    assert.deepEqual(events.map((e) => e.event.type), ['turn.created', 'model.message', 'turn.done']);
+    const message = events[1]?.event;
+    assert.equal(message?.type === 'model.message' && message.content, '{"findings":[]}');
+    const done = events[2]?.event;
+    assert.equal(done?.type === 'turn.done' && done.status, 'completed');
+  });
+
+  it('rejects a reply with no data array rather than replaying nothing', async () => {
+    const transport = new HttpTransport({
+      baseUrl: 'http://harness.test',
+      fetch: fakeFetch([], [], { json: { events: [] } }),
+    });
+
+    await assert.rejects(collect(transport.listTurnEvents('sess-1', 't1')), /expected a "data" array/);
+  });
+});
+
+describe('HttpTransport.getTurn data wrapping', () => {
+  // Observed live: like every other endpoint, the turn comes wrapped in data.
+  it('unwraps the data envelope', async () => {
+    const transport = new HttpTransport({
+      baseUrl: 'http://harness.test',
+      fetch: fakeFetch([], [], { json: { data: { id: 't9', state: { status: 'done' } } } }),
+    });
+
+    assert.deepEqual(await transport.getTurn('sess-1', 't9'), { turnId: 't9', status: 'completed' });
   });
 });

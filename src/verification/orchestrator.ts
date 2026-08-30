@@ -121,7 +121,17 @@ export async function runVerification(options: VerificationOptions): Promise<Ver
     throw fail(caseFile, 'run', `verification sweep ended as ${outcome.kind}`);
   }
 
-  const reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+  let reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+  if (reply === undefined) {
+    // Same live observation as discovery: replay the merged events when the
+    // stream lost the reply.
+    try {
+      await runner.reconnect(outcome.turnId);
+      reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+    } catch {
+      // fall through
+    }
+  }
   if (reply === undefined) {
     throw fail(caseFile, 'parsing', 'verification sweep finished without a reply');
   }

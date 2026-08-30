@@ -115,8 +115,13 @@ export const DEFAULT_SCOPE_RULES: readonly ScopeRule[] = [
 export function scopeKeyForCall(
   call: ResolvedToolCall,
   rules: readonly ScopeRule[] = DEFAULT_SCOPE_RULES,
+  defaultSystem?: SystemId,
 ): ScopeKey | undefined {
-  const system = call.serverName;
+  // Observed live: the wire's tool calls are OpenAI-style and carry no server
+  // name at all. When the run spans exactly one system there is no ambiguity
+  // to be careful about, and the caller says so explicitly; with several
+  // systems the absence stays unscopeable and the call fails closed.
+  const system = call.serverName ?? defaultSystem;
   if (!system) return undefined;
 
   const rule = rules.find((r) => r.tools.includes(call.name));
@@ -179,6 +184,11 @@ export function reconcile(
 ): Reconciliation {
   const findingById = new Map(findings.map((f) => [f.id, f]));
 
+  // One system across every finding means a server-nameless call cannot be
+  // about anything else. More than one, and the ambiguity fails closed.
+  const systems = new Set(findings.map((f) => f.system));
+  const defaultSystem = systems.size === 1 ? [...systems][0] : undefined;
+
   const plannedScopes = new Map<ScopeKey, PlannedAction>();
   for (const action of plan.actions) {
     // Retained, escalated and unerasable data is not to be touched, so a call
@@ -217,7 +227,7 @@ export function reconcile(
       continue;
     }
 
-    const scope = scopeKeyForCall(call, rules);
+    const scope = scopeKeyForCall(call, rules, defaultSystem);
     if (!scope) {
       unauthorised.push({ request, reason: 'unscopeable_arguments' });
       continue;

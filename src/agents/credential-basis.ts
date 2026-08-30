@@ -71,7 +71,27 @@ export function scoutFromEnv(base: AgentSpec, env: NodeJS.ProcessEnv = process.e
     spec = applyCredentialBasis(spec, credentialReadOnly.split(',').map((s) => s.trim()));
   }
 
-  return withModelFromEnv(spec, env);
+  return withModelFromEnv(withoutSandboxFromEnv(spec, env), env);
+}
+
+/**
+ * Run without harness-side skills or a sandbox.
+ *
+ * Skills are registered server-side and materialise in a sandbox, which is a
+ * separate provider needing its own credentials. A harness without one can
+ * still run the whole erasure loop: the retention rules that decide
+ * dispositions live in this codebase's planner and are applied
+ * deterministically — the skill packs are guidance for the agent on top,
+ * not the mechanism. LETHE_NO_SANDBOX states plainly that this run does
+ * without both.
+ */
+export function withoutSandboxFromEnv(spec: AgentSpec, env: NodeJS.ProcessEnv = process.env): AgentSpec {
+  if (env['LETHE_NO_SANDBOX'] !== '1') return spec;
+  return {
+    ...spec,
+    skills: [],
+    config: { ...spec.config, sandbox: { enabled: false } },
+  };
 }
 
 /**

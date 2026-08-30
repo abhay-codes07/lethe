@@ -144,7 +144,19 @@ export async function runDiscovery(options: DiscoveryOptions): Promise<Discovery
       throw fail(caseFile, 'run', `discovery turn ended ${outcome.status}`);
   }
 
-  const reply = lastReply(runner);
+  let reply = lastReply(runner);
+  if (reply === undefined) {
+    // Observed live: the SSE stream can deliver assistant text in a delta
+    // encoding the translator does not reassemble, while the events endpoint
+    // returns the same messages pre-merged. The replay path exists for
+    // reconnects; a stream that lost the reply is the same situation.
+    try {
+      await runner.reconnect(outcome.turnId);
+      reply = lastReply(runner);
+    } catch {
+      // fall through to the original failure
+    }
+  }
   if (reply === undefined) {
     throw fail(caseFile, 'parsing', 'discovery finished without a reply to parse');
   }
@@ -252,6 +264,18 @@ function discoveryPrompt(seeds: readonly Identifier[], systems: readonly string[
     'Every finding must be attached to one of the seed identifiers above or to',
     'an identifier you derived from them and reported. If you cannot justify',
     'the link, ask rather than assume.',
+    '',
+    'matchedBy must copy one of the identifiers above VERBATIM — kind, value',
+    'and system exactly as listed. It is a reference into the case record, not',
+    'a disclosure: the retained certificate redacts separately, so do not',
+    'paraphrase, normalise, or placeholder the value there. Everywhere else',
+    '(locators, predicates, ids) keep personal data out as instructed.',
+    '',
+    'category must be one of: identity, contact, financial, behavioural,',
+    'communications, special_category, derived. matchedBy.kind must be one of:',
+    'email, phone, user_id, account_id, stripe_customer, support_contact,',
+    'device_id, vector_document, object_key. Values outside these lists are',
+    'rejected, not interpreted.',
     '',
     'Reply with JSON only, in this shape:',
     '{"findings":[{"id":"","system":"","locator":{"kind":"table","schema":"",',

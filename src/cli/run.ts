@@ -19,7 +19,7 @@ import { writeFile } from 'node:fs/promises';
 import { executorAgent } from '../agents/executor.ts';
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
-import { scoutFromEnv, withModelFromEnv } from '../agents/credential-basis.ts';
+import { scoutFromEnv, withModelFromEnv, withoutSandboxFromEnv } from '../agents/credential-basis.ts';
 import { restrictToSystems } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { generateSubjectSalt } from '../domain/certificate.ts';
@@ -82,9 +82,11 @@ async function main(): Promise<void> {
   const scout = scoutFromEnv(scoutAgent);
   const systems = process.env['LETHE_SYSTEMS']?.split(',').map((s) => s.trim());
   const executor = withModelFromEnv(
-    systems
-      ? restrictToSystems(executorAgent, systems.filter((name) => executorAgent.mcpServers.some((b) => b.name === name)))
-      : executorAgent,
+    withoutSandboxFromEnv(
+      systems
+        ? restrictToSystems(executorAgent, systems.filter((name) => executorAgent.mcpServers.some((b) => b.name === name)))
+        : executorAgent,
+    ),
   );
 
   const shared = { baseUrl, ...(apiKey ? { apiKey } : {}) };
