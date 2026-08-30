@@ -160,3 +160,32 @@ describe('restrictToSystems', () => {
     assert.throws(() => restrictToSystems(scoutAgent, ['acme-postgres', 'acme-postgress']), /no connector named: acme-postgress/);
   });
 });
+
+describe('credential read-only basis', () => {
+  // For servers whose SDK predates annotations: @read-only resolves to
+  // nothing there, and the guarantee can rest on a write-refusing credential
+  // instead — with the evidence mandatory, because "trust me" is not a basis.
+  it('counts a credential-basis binding as read-only', () => {
+    const binding = {
+      name: 'db',
+      enableTools: '@all' as const,
+      readOnlyBasis: { kind: 'credential' as const, evidence: 'lethe_ro role, writes revoked, refusal verified live' },
+    };
+    assert.equal(bindingIsReadOnly(binding), true);
+    assert.doesNotThrow(() => assertReadOnly(specWith([binding])));
+  });
+
+  it('rejects a credential claim with no evidence', () => {
+    const binding = {
+      name: 'db',
+      enableTools: '@all' as const,
+      readOnlyBasis: { kind: 'credential' as const, evidence: '   ' },
+    };
+    assert.throws(() => bindingIsReadOnly(binding), /no\s+evidence/);
+  });
+
+  it('an annotations basis changes nothing', () => {
+    const binding = { name: 'db', enableTools: '@all' as const, readOnlyBasis: { kind: 'annotations' as const } };
+    assert.equal(bindingIsReadOnly(binding), false);
+  });
+});

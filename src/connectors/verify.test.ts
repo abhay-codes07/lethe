@@ -290,3 +290,38 @@ describe('selector gates', () => {
     assert.equal(isFatal(report), false);
   });
 });
+
+describe('credential-basis bindings', () => {
+  const credential = {
+    name: 'db',
+    enableTools: '@all' as const,
+    readOnlyBasis: {
+      kind: 'credential' as const,
+      evidence: 'lethe_ro role, writes revoked, refusal verified by demo/verify.sh',
+    },
+  };
+
+  // The real-world case this exists for: postgres-mcp's SDK predates tool
+  // annotations entirely, so @read-only resolves to zero tools and the
+  // guarantee must rest on the credential instead.
+  it('passes read-only verification on an unannotated server, with a loud warning', async () => {
+    const report = await verifyAgent(
+      specWith([credential]),
+      catalogOf({ db: [{ name: 'list_schemas' }, { name: 'execute_sql' }] }),
+      true,
+    );
+
+    assert.equal(isFatal(report), false, JSON.stringify(report.violations));
+    // The basis is surfaced, never silent: a reader of the report must see
+    // what each binding's guarantee rests on.
+    const warning = report.violations.find((v) => v.severity === 'warning');
+    assert.match(warning?.message ?? '', /read-only by credential/);
+    assert.match(warning?.message ?? '', /verified/);
+    assert.equal(report.toolsChecked, 2);
+  });
+
+  it('still treats an empty toolset as fatal', async () => {
+    const report = await verifyAgent(specWith([credential]), catalogOf({ db: [] }), true);
+    assert.equal(isFatal(report), true);
+  });
+});
