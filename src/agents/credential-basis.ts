@@ -71,5 +71,19 @@ export function scoutFromEnv(base: AgentSpec, env: NodeJS.ProcessEnv = process.e
     spec = applyCredentialBasis(spec, credentialReadOnly.split(',').map((s) => s.trim()));
   }
 
-  return spec;
+  return withModelFromEnv(spec, env);
+}
+
+/**
+ * Swap the model by environment.
+ *
+ * The specs name a default; the harness only knows the providers whose keys
+ * were pasted into it. LETHE_MODEL bridges the two without editing code —
+ * whichever provider the operator actually has, e.g. `openai/gpt-4o`.
+ * The model is the one field where swapping changes no safety property:
+ * every guarantee here binds tools and credentials, not the brain.
+ */
+export function withModelFromEnv(spec: AgentSpec, env: NodeJS.ProcessEnv = process.env): AgentSpec {
+  const model = env['LETHE_MODEL']?.trim();
+  return model ? { ...spec, model } : spec;
 }
