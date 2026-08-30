@@ -19,7 +19,8 @@ import { writeFile } from 'node:fs/promises';
 import { executorAgent } from '../agents/executor.ts';
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
-import { restrictToSystems, type AgentSpec } from '../agents/spec.ts';
+import { scoutFromEnv } from '../agents/credential-basis.ts';
+import { restrictToSystems } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { generateSubjectSalt } from '../domain/certificate.ts';
 import type { Identifier } from '../domain/identity.ts';
@@ -64,29 +65,6 @@ export function rotationDate(now: Date): string {
 }
 
 
-/**
- * Apply a credential read-only basis to the named connectors.
- *
- * For servers whose SDK predates tool annotations: `@read-only` resolves to
- * nothing there, and the guarantee rests on the credential instead. The env
- * names which connectors that applies to; the evidence is fixed because for
- * the demo estate it is always the same two facts, both checkable.
- */
-function withCredentialBasis(spec: AgentSpec, names: readonly string[]): AgentSpec {
-  const evidence =
-    'connector credential is the lethe_ro role: SELECT-only with writes ' +
-    'explicitly revoked (demo/seed/03-roles.sql), refusal verified live by ' +
-    'demo/verify.sh; server additionally runs in restricted read-only mode';
-
-  return {
-    ...spec,
-    mcpServers: spec.mcpServers.map((binding) =>
-      names.includes(binding.name)
-        ? { ...binding, enableTools: '@all' as const, readOnlyBasis: { kind: 'credential' as const, evidence } }
-        : binding,
-    ),
-  };
-}
 
 async function main(): Promise<void> {
   const baseUrl = process.env['TRUEFORGE_BASE_URL'];
@@ -101,12 +79,8 @@ async function main(): Promise<void> {
 
   // LETHE_SYSTEMS narrows both agents to the connectors that exist for this
   // run. The certificate's scope section reflects the narrowing honestly.
+  const scout = scoutFromEnv(scoutAgent);
   const systems = process.env['LETHE_SYSTEMS']?.split(',').map((s) => s.trim());
-  let scout = systems ? restrictToSystems(scoutAgent, systems) : scoutAgent;
-  const credentialReadOnly = process.env['LETHE_CREDENTIAL_READONLY'];
-  if (credentialReadOnly) {
-    scout = withCredentialBasis(scout, credentialReadOnly.split(',').map((n) => n.trim()));
-  }
   const executor = systems
     ? restrictToSystems(executorAgent, systems.filter((name) => executorAgent.mcpServers.some((b) => b.name === name)))
     : executorAgent;

@@ -23,7 +23,8 @@
 
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
-import { restrictToSystems, type AgentSpec } from '../agents/spec.ts';
+import { scoutFromEnv } from '../agents/credential-basis.ts';
+import type { AgentSpec } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { verifyAgent } from '../connectors/verify.ts';
 
@@ -177,29 +178,6 @@ export async function smoke(options: SmokeOptions): Promise<number> {
 }
 
 
-/**
- * Apply a credential read-only basis to the named connectors.
- *
- * For servers whose SDK predates tool annotations: `@read-only` resolves to
- * nothing there, and the guarantee rests on the credential instead. The env
- * names which connectors that applies to; the evidence is fixed because for
- * the demo estate it is always the same two facts, both checkable.
- */
-function withCredentialBasis(spec: AgentSpec, names: readonly string[]): AgentSpec {
-  const evidence =
-    'connector credential is the lethe_ro role: SELECT-only with writes ' +
-    'explicitly revoked (demo/seed/03-roles.sql), refusal verified live by ' +
-    'demo/verify.sh; server additionally runs in restricted read-only mode';
-
-  return {
-    ...spec,
-    mcpServers: spec.mcpServers.map((binding) =>
-      names.includes(binding.name)
-        ? { ...binding, enableTools: '@all' as const, readOnlyBasis: { kind: 'credential' as const, evidence } }
-        : binding,
-    ),
-  };
-}
 
 async function main(): Promise<void> {
   const baseUrl = process.env['TRUEFORGE_BASE_URL'];
@@ -218,17 +196,9 @@ async function main(): Promise<void> {
 
   process.stdout.write(`smoke run against ${baseUrl}\n`);
 
-  // LETHE_SYSTEMS narrows the sweep to the connectors that actually exist —
-  // a first run with one Postgres should be one command, not five servers.
-  const systems = process.env['LETHE_SYSTEMS'];
-  let scout = systems
-    ? restrictToSystems(scoutAgent, systems.split(',').map((name) => name.trim()))
-    : scoutAgent;
-
-  const credentialReadOnly = process.env['LETHE_CREDENTIAL_READONLY'];
-  if (credentialReadOnly) {
-    scout = withCredentialBasis(scout, credentialReadOnly.split(',').map((name) => name.trim()));
-  }
+  // LETHE_SYSTEMS narrows the sweep; LETHE_CREDENTIAL_READONLY applies the
+  // credential basis, and only to connectors the evidence table covers.
+  const scout = scoutFromEnv(scoutAgent);
 
   const code = await smoke({
     baseUrl,
