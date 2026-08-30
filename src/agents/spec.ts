@@ -11,6 +11,17 @@
  * agent whose write tools are absent. See `assertReadOnly`.
  */
 
+/**
+ * Why a binding is believed unable to write.
+ *
+ * `credential` exists for annotation-blind servers and must say how the
+ * credential's read-only property was established — a role definition, a
+ * verification run — because "trust me" is not a basis.
+ */
+export type ReadOnlyBasis =
+  | { readonly kind: 'annotations' }
+  | { readonly kind: 'credential'; readonly evidence: string };
+
 /** How much of a connected system's toolset an agent may see. */
 export type ToolSelector =
   /** Every tool the server exposes. */
@@ -24,6 +35,18 @@ export interface McpServerBinding {
   /** Name of the connector as registered in the harness. Credentials live there. */
   readonly name: string;
   readonly enableTools: ToolSelector;
+  /**
+   * What makes this binding read-only.
+   *
+   * The default basis is annotations: the `@read-only` selector, resolved
+   * from the server's own tool hints. Some real servers predate annotations
+   * entirely — their SDK cannot express `readOnlyHint` — and for those the
+   * guarantee can rest on the credential instead: a database role that
+   * refuses writes no matter what the tool is called. That claim is only as
+   * good as its evidence, so the evidence is mandatory and travels with the
+   * binding into every verification report.
+   */
+  readonly readOnlyBasis?: ReadOnlyBasis;
   /** Exceptions carved out of `enableTools`, applied after it resolves. */
   readonly disableTools?: readonly string[];
   /**
@@ -75,7 +98,19 @@ export interface AgentConfig {
  * potentially mutating. That is the safe direction to be wrong in.
  */
 export function bindingIsReadOnly(binding: McpServerBinding): boolean {
-  return binding.enableTools === '@read-only';
+  if (binding.enableTools === '@read-only') return true;
+
+  if (binding.readOnlyBasis?.kind === 'credential') {
+    if (!binding.readOnlyBasis.evidence.trim()) {
+      throw new Error(
+        `binding "${binding.name}" claims a read-only credential with no ` +
+          'evidence. The claim is only as good as what establishes it.',
+      );
+    }
+    return true;
+  }
+
+  return false;
 }
 
 /**

@@ -23,10 +23,11 @@
 
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
-import { restrictToSystems } from '../agents/spec.ts';
+import { scoutFromEnv } from '../agents/credential-basis.ts';
+import type { AgentSpec } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { verifyAgent } from '../connectors/verify.ts';
-import type { AgentSpec } from '../agents/spec.ts';
+
 import { HttpTransport } from '../harness/http-transport.ts';
 import type { QuestionRequest } from '../harness/turn-runner.ts';
 import { CaseFile } from '../lifecycle/case-file.ts';
@@ -176,6 +177,8 @@ export async function smoke(options: SmokeOptions): Promise<number> {
   }
 }
 
+
+
 async function main(): Promise<void> {
   const baseUrl = process.env['TRUEFORGE_BASE_URL'];
 
@@ -193,10 +196,14 @@ async function main(): Promise<void> {
 
   process.stdout.write(`smoke run against ${baseUrl}\n`);
 
+  // LETHE_SYSTEMS narrows the sweep; LETHE_CREDENTIAL_READONLY applies the
+  // credential basis, and only to connectors the evidence table covers.
+  const scout = scoutFromEnv(scoutAgent);
+
   const code = await smoke({
     baseUrl,
     apiKey: process.env['TRUEFORGE_API_KEY'],
-    scout: scoutAgent,
+    scout,
     seed: DEMO_SEED,
   });
 

@@ -62,12 +62,13 @@ describe('toManifest', () => {
     assert.deepEqual(toManifest(spec()).skills, [{ name: 'article-17-exemptions' }]);
   });
 
-  it('maps the compaction threshold to its long wire name', () => {
+  // The live server rejects the docs' threshold field outright: its
+  // CompactionConfig is additionalProperties:false. The absence is load-
+  // bearing, so it gets a test.
+  it('omits the compaction threshold the live schema rejects', () => {
     const manifest = toManifest(spec());
-    assert.equal(
-      manifest.config.context_management.compaction.compaction_threshold_tokens,
-      50_000,
-    );
+    assert.ok(!('compaction_threshold_tokens' in manifest.config.context_management.compaction));
+    assert.equal(manifest.config.context_management.compaction.enabled, true);
   });
 
   it('omits optional binding fields it was not given', () => {

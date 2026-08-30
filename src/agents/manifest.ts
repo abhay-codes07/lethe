@@ -41,7 +41,6 @@ export interface WireConfig {
   readonly context_management: {
     readonly compaction: {
       readonly enabled: boolean;
-      readonly compaction_threshold_tokens: number;
     };
     readonly large_tool_response: { readonly enabled: boolean };
   };
@@ -69,9 +68,12 @@ export function toManifest(spec: AgentSpec): WireManifest {
       ask_user_questions: { enabled: spec.config.askUserQuestions.enabled },
       dynamic_sub_agents: { enabled: spec.config.subAgents.enabled },
       context_management: {
+        // The live server (0.2.0-rc.0) rejects the docs' threshold field:
+        // CompactionConfig is additionalProperties:false with enabled+trigger,
+        // and the sensible default (80% of model context) needs no trigger.
+        // Found by the first live session-create, not by the docs.
         compaction: {
           enabled: spec.config.contextManagement.compaction.enabled,
-          compaction_threshold_tokens: spec.config.contextManagement.compaction.thresholdTokens,
         },
         large_tool_response: {
           enabled: spec.config.contextManagement.largeToolResponse.enabled,

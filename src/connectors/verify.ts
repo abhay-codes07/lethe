@@ -60,6 +60,15 @@ export function exposedTools(
 ): readonly ToolDescriptor[] {
   if (binding.enableTools === '@all') return filterDisabled(binding, available);
 
+  if (binding.readOnlyBasis?.kind === 'credential') {
+    // The credential cannot write regardless of what the tools are called, so
+    // the whole toolset is exposable. The annotation checks below are skipped
+    // for these bindings — that is the point of the basis, not a loophole:
+    // the evidence string says what holds instead, and it is printed with
+    // every verification report.
+    return filterDisabled(binding, available);
+  }
+
   if (binding.enableTools === '@read-only') {
     // Resolved with the harness's rule, not ours. Using our stricter one would
     // filter out exactly the tools this check exists to catch.
@@ -132,6 +141,19 @@ export async function verifyAgent(
     }
 
     toolsChecked += exposed.length;
+
+    if (expectReadOnly && binding.readOnlyBasis?.kind === 'credential') {
+      // Annotations are unavailable or untrusted here; the credential is the
+      // guarantee. Surface that loudly as a warning rather than silently —
+      // a reader of the report must see which basis each binding rests on.
+      violations.push({
+        severity: 'warning',
+        server: binding.name,
+        message:
+          `read-only by credential, not annotations: ${binding.readOnlyBasis.evidence}`,
+      });
+      continue;
+    }
 
     for (const tool of exposed) {
       const verdict = classify(tool);

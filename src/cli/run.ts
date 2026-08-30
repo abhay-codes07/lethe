@@ -19,6 +19,7 @@ import { writeFile } from 'node:fs/promises';
 import { executorAgent } from '../agents/executor.ts';
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
+import { scoutFromEnv } from '../agents/credential-basis.ts';
 import { restrictToSystems } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { generateSubjectSalt } from '../domain/certificate.ts';
@@ -63,6 +64,8 @@ export function rotationDate(now: Date): string {
   return new Date(now.getTime() + 90 * 86_400_000).toISOString();
 }
 
+
+
 async function main(): Promise<void> {
   const baseUrl = process.env['TRUEFORGE_BASE_URL'];
   if (!baseUrl) {
@@ -76,8 +79,8 @@ async function main(): Promise<void> {
 
   // LETHE_SYSTEMS narrows both agents to the connectors that exist for this
   // run. The certificate's scope section reflects the narrowing honestly.
+  const scout = scoutFromEnv(scoutAgent);
   const systems = process.env['LETHE_SYSTEMS']?.split(',').map((s) => s.trim());
-  const scout = systems ? restrictToSystems(scoutAgent, systems) : scoutAgent;
   const executor = systems
     ? restrictToSystems(executorAgent, systems.filter((name) => executorAgent.mcpServers.some((b) => b.name === name)))
     : executorAgent;
