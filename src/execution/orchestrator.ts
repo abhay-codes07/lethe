@@ -76,7 +76,12 @@ export interface ExecutionResult {
   readonly identifiersSuppressed: number;
 }
 
-const DEFAULT_GATE_ROUNDS = 20;
+// Observed live: the harness's natural cadence is one gated call per round —
+// the model issues a statement, awaits its result, issues the next. A plan of
+// fifteen actions plus the id-resolving reads before them is comfortably
+// forty rounds of ordinary progress. The bound guards against a loop, not
+// against thoroughness.
+const DEFAULT_GATE_ROUNDS = 80;
 
 /**
  * Whether a SQL string provably cannot write.
