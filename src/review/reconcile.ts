@@ -73,13 +73,30 @@ export const DEFAULT_SCOPE_RULES: readonly ScopeRule[] = [
   {
     tools: ['delete_rows', 'anonymise_rows', 'execute_sql'],
     scope: (args) => {
-      const table = str(args, 'table');
-      if (!table) return undefined;
       // A bare table name and a schema-qualified one must not produce
       // different keys, or the same target reconciles inconsistently.
-      const schema = str(args, 'schema') ?? 'public';
-      const identifier = table.includes('.') ? table : `${schema}.${table}`;
-      return { kind: 'table', identifier };
+      const qualify = (table: string) => {
+        const schema = str(args, 'schema') ?? 'public';
+        return table.includes('.') ? table : `${schema}.${table}`;
+      };
+
+      const table = str(args, 'table');
+      if (table) return { kind: 'table', identifier: qualify(table) };
+
+      // Observed live: SQL-shaped servers take {sql}, not {table}. The write
+      // target is read out of the statement itself; several targets, or none
+      // recognisable, stay unscopeable and fail closed.
+      const sql = str(args, 'sql');
+      if (!sql) return undefined;
+
+      const targets = [
+        ...sql.matchAll(/\b(?:update|delete\s+from|insert\s+into|truncate(?:\s+table)?)\s+(?:only\s+)?("?[A-Za-z_][\w$]*"?(?:\."?[A-Za-z_][\w$]*"?)?)/gi),
+      ].map((m) => m[1]!.replaceAll('"', ''));
+
+      const unique = [...new Set(targets)];
+      if (unique.length !== 1) return undefined;
+
+      return { kind: 'table', identifier: qualify(unique[0]!) };
     },
   },
   {
@@ -264,8 +281,11 @@ export function explainUnauthorised(call: UnauthorisedCall): string {
         `${name} is not a tool this reconciler can scope, so it cannot be ` +
         'matched to the plan. Refused rather than assumed harmless.'
       );
-    case 'unscopeable_arguments':
-      return `${name} did not identify what it would touch, so it cannot be checked against the plan.`;
+    case 'unscopeable_arguments': {
+      const sql = call.request.call.complete ? call.request.call.arguments['sql'] : undefined;
+      const preview = typeof sql === 'string' ? ` SQL: ${sql.slice(0, 160).replace(/\s+/g, ' ')}` : '';
+      return `${name} did not identify what it would touch, so it cannot be checked against the plan.${preview}`;
+    }
     case 'unresolved_call':
       return 'The arguments never finished streaming, so there is nothing to check against the plan.';
   }

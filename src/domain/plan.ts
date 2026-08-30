@@ -86,6 +86,8 @@ export interface ConstraintViolation {
   readonly affectedRows: number;
   /** The disposition change that resolves it, if one exists. */
   readonly resolution?: string;
+  /** Which planned action triggered it. What makes amendment deterministic. */
+  readonly triggeredBy?: string;
 }
 
 export type PlanStatus =
@@ -359,6 +361,106 @@ export function markUnerasable(
 
   // Demoted deliberately: the blast radius on this plan was measured for a
   // different set of actions.
+  return { ...plan, actions, status: 'draft' };
+}
+
+/**
+ * Amend a plan from what its simulation measured.
+ *
+ * The first live run made this mandatory: deleting the subject's users row
+ * violated five child foreign keys at once, and the plan card refused to
+ * render — correctly — with nowhere for the case to go. This is the
+ * `simulating → planning` edge earning its keep: each violation names the
+ * action that triggered it, and that action becomes an anonymisation citing
+ * the constraint that forced it. Severing the identity keeps the row, and
+ * the children's keys keep their referent.
+ *
+ * Violations that name no trigger are left alone — amending on a guess would
+ * convert the wrong action and re-simulate into the same wall.
+ */
+export function amendForViolations(
+  plan: ErasurePlan,
+  violations: readonly ConstraintViolation[],
+): ErasurePlan {
+  if (plan.status !== 'draft' && plan.status !== 'simulated') {
+    throw new Error(`cannot amend a ${plan.status} plan; amendment precedes approval`);
+  }
+
+  const byTrigger = new Map<string, ConstraintViolation[]>();
+  for (const violation of violations) {
+    if (!violation.triggeredBy) continue;
+    const list = byTrigger.get(violation.triggeredBy) ?? [];
+    list.push(violation);
+    byTrigger.set(violation.triggeredBy, list);
+  }
+
+  if (byTrigger.size === 0) return plan;
+
+  const actions = plan.actions.map((action) => {
+    const hits = byTrigger.get(action.findingId);
+    if (!hits || (action.disposition !== 'delete' && action.disposition !== 'delete_and_compact')) {
+      return action;
+    }
+
+    const named = hits.map((v) => `${v.constraint} (${v.affectedRows} row(s) in ${v.table})`).join('; ');
+    return {
+      findingId: action.findingId,
+      disposition: 'anonymise' as const,
+      count: action.count,
+      justification:
+        `Hard delete violates ${named}. The link to the subject is severed and ` +
+        'the row kept, so dependent records keep their referent.',
+      irreversible: true,
+    };
+  });
+
+  // Demoted: the blast radius was measured for the un-amended actions.
+  return { ...plan, actions, status: 'draft' };
+}
+
+/**
+ * Record a human's decision on an escalated finding.
+ *
+ * Escalation exists because no rule may decide; this is where the person
+ * does. The decision needs a reason either way — it is the justification the
+ * card and the certificate will carry.
+ */
+export function resolveEscalation(
+  plan: ErasurePlan,
+  findingId: string,
+  decision: 'delete' | 'retain',
+  reason: string,
+): ErasurePlan {
+  if (!reason.trim()) {
+    throw new Error('an escalation decision needs a reason; it goes on the certificate');
+  }
+
+  const target = plan.actions.find((a) => a.findingId === findingId);
+  if (!target) throw new Error(`plan has no action for finding ${findingId}`);
+  if (target.disposition !== 'escalate') {
+    throw new Error(`finding ${findingId} is ${target.disposition}, not escalated`);
+  }
+
+  const actions = plan.actions.map((action) =>
+    action.findingId === findingId
+      ? decision === 'delete'
+        ? {
+            findingId,
+            disposition: 'delete' as const,
+            count: action.count,
+            justification: `Escalated to a person; decided: delete. ${reason}`,
+            irreversible: true,
+          }
+        : {
+            findingId,
+            disposition: 'retain' as const,
+            count: action.count,
+            justification: `Escalated to a person; decided: retain. ${reason}`,
+            irreversible: false,
+          }
+      : action,
+  );
+
   return { ...plan, actions, status: 'draft' };
 }
 

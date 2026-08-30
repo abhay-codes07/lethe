@@ -59,6 +59,13 @@ export interface ExecutionOptions {
   readonly backupRotatesAt: string;
   /** Bound on gate rounds, so a looping executor ends rather than grinds. */
   readonly maxGateRounds?: number;
+  /**
+   * Physical connector → logical system, e.g. acme-postgres-rw →
+   * acme-postgres. The plan speaks in systems; a credential split means the
+   * executor reaches the same system through a differently-named connector,
+   * and reconciliation must compare like with like.
+   */
+  readonly connectorAliases?: Readonly<Record<string, string>>;
 }
 
 export interface ExecutionResult {
@@ -70,6 +77,24 @@ export interface ExecutionResult {
 }
 
 const DEFAULT_GATE_ROUNDS = 20;
+
+/**
+ * Whether a SQL string provably cannot write.
+ *
+ * Provably, not plausibly: one statement, starting as a SELECT (WITH-prefixed
+ * allowed), containing no write keyword anywhere — data-modifying CTEs are
+ * caught by the keyword scan — and no statement separator that could smuggle
+ * a second statement. Anything this cannot prove goes to reconciliation.
+ */
+export function isReadOnlySql(sql: string): boolean {
+  const trimmed = sql.trim().replace(/;\s*$/, '');
+  if (trimmed.includes(';')) return false;
+  if (!/^\s*(?:with\b[\s\S]*?)?select\b/i.test(trimmed)) return false;
+  if (/\b(?:insert|update|delete|truncate|drop|alter|create|grant|revoke|copy|vacuum|call|do)\b/i.test(trimmed)) {
+    return false;
+  }
+  return true;
+}
 
 /** Dispositions the executor acts on. Everything else it must not touch. */
 const ACTIONABLE = new Set(['delete', 'delete_and_compact', 'anonymise']);
@@ -113,7 +138,9 @@ export async function runExecution(options: ExecutionOptions): Promise<Execution
 
   let outcome: RunOutcome;
   try {
-    outcome = await runner.start(executionPrompt(plan.requestId, findings, plan));
+    outcome = await runner.start(
+      executionPrompt(plan.requestId, findings, plan, caseFile.identities?.all() ?? []),
+    );
   } catch (error) {
     throw fail(caseFile, 'run', `execution turn failed: ${(error as Error).message}`);
   }
@@ -122,7 +149,43 @@ export async function runExecution(options: ExecutionOptions): Promise<Execution
   const limit = options.maxGateRounds ?? DEFAULT_GATE_ROUNDS;
 
   for (let round = 0; round < limit && outcome.kind === 'awaiting_approval'; round += 1) {
-    const reconciliation = caseFile.authoriseCalls(outcome.requests);
+    // A plan's predicates are symbolic ("customer_id = :derived_user_id");
+    // resolving them takes SELECTs, and gating execute_sql wholesale gates
+    // those too. A statement that provably cannot write is allowed without a
+    // plan line — it is reading, and reading is the scout's whole job done
+    // with the executor's credential. Anything not provably read-only goes
+    // through reconciliation like every write.
+    const aliases = options.connectorAliases ?? {};
+    const aliased = outcome.requests.map((request) => {
+      const call = request.call;
+      if (!call.complete || !call.serverName || !(call.serverName in aliases)) return request;
+      return { ...request, call: { ...call, serverName: aliases[call.serverName]! } };
+    });
+
+    const readDecisions = new Map<string, ApprovalDecision>();
+    const writeRequests = aliased.filter((request) => {
+      const call = request.call;
+      if (call.complete && call.name === 'execute_sql') {
+        const sql = call.arguments['sql'];
+        if (typeof sql === 'string' && isReadOnlySql(sql)) {
+          readDecisions.set(request.toolCallId, { status: 'allow' });
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (writeRequests.length === 0) {
+      callsAuthorised += readDecisions.size;
+      try {
+        outcome = await runner.respondToApprovals(readDecisions);
+      } catch (error) {
+        throw fail(caseFile, 'gates', (error as Error).message);
+      }
+      continue;
+    }
+
+    const reconciliation = caseFile.authoriseCalls(writeRequests);
 
     if (reconciliation.kind === 'scope_violation') {
       // Every call is denied — the authorised ones too. One call outside the
@@ -131,7 +194,7 @@ export async function runExecution(options: ExecutionOptions): Promise<Execution
       // already tried to exceed it. The denials are delivered before the run
       // is failed so the refusal, and its reason, land in the turn's own
       // record rather than only in ours.
-      const decisions = new Map<string, ApprovalDecision>();
+      const decisions = new Map<string, ApprovalDecision>(readDecisions);
       for (const call of reconciliation.unauthorised) {
         decisions.set(call.request.toolCallId, { status: 'deny', reason: explainUnauthorised(call) });
       }
@@ -152,7 +215,7 @@ export async function runExecution(options: ExecutionOptions): Promise<Execution
       throw fail(caseFile, 'scope', `execution exceeded the signed plan: ${detail}`);
     }
 
-    const decisions = new Map<string, ApprovalDecision>();
+    const decisions = new Map<string, ApprovalDecision>(readDecisions);
     for (const call of reconciliation.calls) {
       decisions.set(call.request.toolCallId, { status: 'allow' });
     }
@@ -185,8 +248,12 @@ export async function runExecution(options: ExecutionOptions): Promise<Execution
         'the executor asked a question mid-run. The signed plan is its entire ' +
           'authority; ambiguity means re-planning, not interpretation.',
       );
-    case 'blocked':
-      throw fail(caseFile, 'run', 'execution stopped at a gate that could not be rendered');
+    case 'blocked': {
+      const detail = outcome.unresolved
+        .map((r) => `${r.call.complete ? r.call.name : r.toolCallId}: ${r.call.complete ? 'complete?' : r.call.reason}`)
+        .join('; ');
+      throw fail(caseFile, 'run', `execution stopped at a gate that could not be rendered (${detail})`);
+    }
     case 'failed':
       throw fail(caseFile, 'run', `execution turn ended ${outcome.status}`);
   }
@@ -251,6 +318,7 @@ function executionPrompt(
   requestId: string,
   findings: readonly Finding[],
   plan: NonNullable<CaseFile['plan']>,
+  identities: readonly { readonly identifier: { kind: string; value: string; system: string } }[],
 ): string {
   const byId = new Map(findings.map((finding) => [finding.id, finding]));
 
@@ -266,15 +334,38 @@ function executionPrompt(
     else handsOff.push(`${line} — ${action.justification}`);
   }
 
+  const bindings = identities.map(
+    (r) => `  - ${r.identifier.kind} (${r.identifier.system}): ${r.identifier.value}`,
+  );
+
   return [
     `Execute erasure plan ${requestId} exactly as written. It has been approved`,
     'by a person and is the whole of your authority.',
+    '',
+    // Discovery redacts its predicates, so the plan reads symbolically
+    // (:seed_email, :derived_user_id). Execution is the one place the values
+    // belong: this agent is deleting the data, and a plan it cannot bind is
+    // authority it cannot use. The subject identifiers, verbatim:
+    'Subject identifiers — bind any placeholder in the plan to these:',
+    ...(bindings.length > 0 ? bindings : ['  (none recorded)']),
     '',
     'Actions:',
     ...act,
     '',
     'Do not touch, under any circumstances:',
     ...(handsOff.length > 0 ? handsOff : ['  (nothing is exempt)']),
+    '',
+    'Issue ONE SQL statement per tool call, and each statement must write to',
+    'exactly one table. Every call is checked against the signed plan by its',
+    'target table before it is allowed; batched statements or multi-table',
+    'writes cannot be attributed to a plan line and are denied, ending the',
+    'run. Reads (plain SELECTs) are allowed freely to resolve identifiers.',
+    '',
+    'Order of operations matters. First resolve every identifier you will',
+    'need into literal values with SELECTs. Then perform the deletes. Then',
+    'anonymise identity-bearing rows (users last of all) — anonymising them',
+    'early severs the very lookups your remaining statements depend on, and a',
+    'DELETE that matches zero rows reports success while erasing nothing.',
     '',
     'Where the plan says anonymise, sever the link to the subject and keep the',
     'record. Where it says delete and compact, the delete is not finished until',

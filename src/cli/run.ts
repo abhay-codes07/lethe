@@ -19,12 +19,12 @@ import { writeFile } from 'node:fs/promises';
 import { executorAgent } from '../agents/executor.ts';
 import { toManifest } from '../agents/manifest.ts';
 import { scoutAgent } from '../agents/scout.ts';
-import { scoutFromEnv, withModelFromEnv, withoutSandboxFromEnv } from '../agents/credential-basis.ts';
+import { scoutFromEnv, withExecutorConnectorFromEnv, withModelFromEnv, withoutSandboxFromEnv } from '../agents/credential-basis.ts';
 import { restrictToSystems } from '../agents/spec.ts';
 import { HttpToolCatalog } from '../connectors/http-catalog.ts';
 import { generateSubjectSalt } from '../domain/certificate.ts';
 import type { Identifier } from '../domain/identity.ts';
-import { draftPlan } from '../domain/plan.ts';
+import { amendForViolations, draftPlan, resolveEscalation } from '../domain/plan.ts';
 import { runDiscovery } from '../discovery/orchestrator.ts';
 import { runExecution } from '../execution/orchestrator.ts';
 import { HttpTransport } from '../harness/http-transport.ts';
@@ -81,11 +81,13 @@ async function main(): Promise<void> {
   // run. The certificate's scope section reflects the narrowing honestly.
   const scout = scoutFromEnv(scoutAgent);
   const systems = process.env['LETHE_SYSTEMS']?.split(',').map((s) => s.trim());
-  const executor = withModelFromEnv(
-    withoutSandboxFromEnv(
-      systems
-        ? restrictToSystems(executorAgent, systems.filter((name) => executorAgent.mcpServers.some((b) => b.name === name)))
-        : executorAgent,
+  const executor = withExecutorConnectorFromEnv(
+    withModelFromEnv(
+      withoutSandboxFromEnv(
+        systems
+          ? restrictToSystems(executorAgent, systems.filter((name) => executorAgent.mcpServers.some((b) => b.name === name)))
+          : executorAgent,
+      ),
     ),
   );
 
@@ -103,6 +105,37 @@ async function main(): Promise<void> {
   );
 
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
+
+  // LETHE_SCRIPT queues answers for unattended runs — recordings, CI smoke of
+  // the loop — separated by '|'. Interactive remains the default; the script
+  // exists because a piped stdin and readline disagree about EOF on Windows,
+  // and a demo should not depend on winning that argument.
+  // Entries may be keyed ("escalate=...", "sign=..."), matched to the prompt
+  // that is actually showing — a sequential script feeds the wrong prompt the
+  // moment an optional question does not fire, and an answer meant for an
+  // escalation then reads as a refusal at the gate.
+  const scripted = (process.env['LETHE_SCRIPT'] ?? '').split('|').filter((a) => a.trim() !== '');
+  const ask = async (prompt: string): Promise<string> => {
+    const keyed = scripted.findIndex((entry) => {
+      const key = entry.split('=')[0]?.trim().toLowerCase();
+      if (key === 'escalate') return prompt.includes("'delete <reason>'");
+      if (key === 'sign') return prompt.includes("'sign'");
+      return false;
+    });
+    if (keyed >= 0) {
+      const value = scripted.splice(keyed, 1)[0]!.split(/=(.*)/s)[1] ?? '';
+      process.stdout.write(`${prompt}${value}
+`);
+      return value;
+    }
+    const queued = scripted.find((e) => !e.includes('=')) !== undefined ? scripted.shift() : undefined;
+    if (queued !== undefined) {
+      process.stdout.write(`${prompt}${queued}
+`);
+      return queued;
+    }
+    return terminal.question(prompt);
+  };
   const seed: Identifier = { kind: 'email', value: args.seedEmail, system: 'acme-postgres' };
   const caseFile = new CaseFile(args.requestId);
 
@@ -135,12 +168,28 @@ async function main(): Promise<void> {
     });
     process.stdout.write(`   ${discovery.findings.length} finding(s) across ${new Set(discovery.findings.map((f) => f.system)).size} system(s)\n\n`);
 
-    // 2 — plan and measure.
-    caseFile.recordPlan(draftPlan(args.requestId, [seed], discovery.findings));
+    // 2 — plan, resolve what needs a person, measure; amend and re-measure
+    // when the measurement says no. The planning loop is the product: an FK
+    // violation becoming an anonymisation is it working, not failing.
+    let plan = draftPlan(args.requestId, [seed], discovery.findings);
+
+    for (const action of plan.actions) {
+      if (action.disposition !== 'escalate') continue;
+      process.stdout.write(`\na finding needs your decision (${action.findingId}):\n  ${action.justification}\n`);
+      const decision = await ask("type 'delete <reason>' or 'retain <reason>': ");
+      const match = decision.trim().match(/^(delete|retain)\s+(.+)$/i);
+      if (!match) {
+        process.stdout.write('no decision given; the finding stays escalated and the plan cannot be signed.\n');
+        continue;
+      }
+      plan = resolveEscalation(plan, action.findingId, match[1]!.toLowerCase() as 'delete' | 'retain', match[2]!);
+    }
+
+    caseFile.recordPlan(plan);
     caseFile.transition('simulating', 'plan drafted');
 
     process.stdout.write('── simulation: applying the plan to a copy\n');
-    const simulation = await runSimulation({
+    let simulation = await runSimulation({
       caseFile,
       transport,
       catalog,
@@ -148,8 +197,30 @@ async function main(): Promise<void> {
       sessionId: scoutSession,
     });
 
+    for (let round = 0; simulation.kind === 'blocked' && round < 2; round += 1) {
+      process.stdout.write('   the measurement says no:\n');
+      for (const blocker of simulation.blockers) process.stdout.write(`   - ${blocker}\n`);
+
+      const before = caseFile.plan!;
+      const amended = amendForViolations(before, simulation.blastRadius.constraintViolations);
+      if (amended === before) {
+        process.stdout.write('   nothing amendable (no violation names its trigger); stopping here.\n');
+        return;
+      }
+
+      const converted = amended.actions.filter(
+        (a, i) => a.disposition !== before.actions[i]?.disposition,
+      ).length;
+      process.stdout.write(
+        `   amended: ${converted} action(s) converted to anonymise, citing the constraint. Re-measuring.\n`,
+      );
+      caseFile.recordPlan(amended);
+      caseFile.transition('simulating', `re-simulating after amendment round ${round + 1}`);
+      simulation = await runSimulation({ caseFile, transport, catalog, scout, sessionId: scoutSession });
+    }
+
     if (simulation.kind === 'blocked') {
-      process.stdout.write('   the measurement says no. The case is back in planning:\n');
+      process.stdout.write('   still blocked after amendment; a person needs to look at the plan itself:\n');
       for (const blocker of simulation.blockers) process.stdout.write(`   - ${blocker}\n`);
       return;
     }
@@ -161,7 +232,7 @@ async function main(): Promise<void> {
     }
 
     process.stdout.write(`\n${formatPlanCard(card.card)}\n\n`);
-    const answer = await terminal.question(
+    const answer = await ask(
       "type 'sign' to execute, or anything else as the reason for refusal: ",
     );
 
@@ -185,6 +256,9 @@ async function main(): Promise<void> {
       sessionId: executorSession,
       ledger,
       backupRotatesAt: rotationDate(new Date()),
+      ...(process.env['LETHE_EXECUTOR_CONNECTOR']
+        ? { connectorAliases: { [process.env['LETHE_EXECUTOR_CONNECTOR']]: 'acme-postgres' } }
+        : {}),
     });
     process.stdout.write(
       `   ${execution.callsAuthorised} call(s) authorised against the signed plan, ` +

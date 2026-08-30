@@ -247,3 +247,31 @@ describe('explainUnauthorised', () => {
     assert.match(explainUnauthorised(result.unauthorised[0]!), /assumed harmless/);
   });
 });
+
+describe('execute_sql scope from raw SQL', () => {
+  // Observed live: SQL-shaped servers take {sql}, not {table}.
+  it('reads a single write target out of the statement', () => {
+    const key = scopeKeyForCall({
+      complete: true, id: 'c', name: 'execute_sql', serverName: 'acme-postgres',
+      arguments: { sql: 'DELETE FROM public.sessions WHERE user_id IN (SELECT id FROM users)' },
+    });
+    assert.equal(key, 'acme-postgres:table:public.sessions');
+  });
+
+  it('qualifies a bare table with the default schema', () => {
+    const key = scopeKeyForCall({
+      complete: true, id: 'c', name: 'execute_sql', serverName: 'acme-postgres',
+      arguments: { sql: 'UPDATE users SET full_name = NULL WHERE id = 4471' },
+    });
+    assert.equal(key, 'acme-postgres:table:public.users');
+  });
+
+  // Several targets, or none recognisable, stay unscopeable and fail closed.
+  it('refuses to scope a statement touching two tables', () => {
+    const key = scopeKeyForCall({
+      complete: true, id: 'c', name: 'execute_sql', serverName: 'acme-postgres',
+      arguments: { sql: 'DELETE FROM sessions; DELETE FROM orders' },
+    });
+    assert.equal(key, undefined);
+  });
+});
