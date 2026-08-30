@@ -104,7 +104,7 @@ npm run build       # emits dist/ without the tests
 
 ## Code review
 
-Every substantive change reached `main` through a pull request — 25 merged PRs, each with a description stating the decisions worth arguing with and the failure mode being prevented. Qodo Merge reviews pull requests on this repository.
+Every substantive change reached `main` through a pull request, each with a description stating the decisions worth arguing with and the failure mode being prevented — the [merged PR history](https://github.com/abhay-codes07/lethe/pulls?q=is%3Apr+is%3Amerged) is the count of record. Qodo Merge reviews pull requests on this repository.
 
 **Qodo Code Review Evidence:** [PR #26](https://github.com/abhay-codes07/lethe/pull/26) (Qodo-reviewed). Representative merged PRs showing how the project came together: [#12 — a verification pass that found a real rule-ordering bug](https://github.com/abhay-codes07/lethe/pull/12), [#20 — closing the loop, where tests caught two privacy leaks on the certificate](https://github.com/abhay-codes07/lethe/pull/20), [#17 — four wire-format assumptions falsified against the API reference](https://github.com/abhay-codes07/lethe/pull/17).
 
