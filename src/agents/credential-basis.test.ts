@@ -53,3 +53,18 @@ describe('scoutFromEnv', () => {
     assert.deepEqual(scoutFromEnv(scoutAgent, {} as NodeJS.ProcessEnv), scoutAgent);
   });
 });
+
+describe('withModelFromEnv', () => {
+  it('swaps the model when the environment names one', async () => {
+    const { withModelFromEnv } = await import('./credential-basis.ts');
+    const spec = withModelFromEnv(scoutAgent, { LETHE_MODEL: 'openai/gpt-4o' } as NodeJS.ProcessEnv);
+    assert.equal(spec.model, 'openai/gpt-4o');
+    // The model is the one field where swapping changes no safety property.
+    assert.doesNotThrow(() => assertReadOnly(spec));
+  });
+
+  it('keeps the spec default otherwise', async () => {
+    const { withModelFromEnv } = await import('./credential-basis.ts');
+    assert.equal(withModelFromEnv(scoutAgent, {} as NodeJS.ProcessEnv).model, scoutAgent.model);
+  });
+});
