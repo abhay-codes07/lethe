@@ -169,9 +169,16 @@ export class WireTranslator {
       }
 
       case 'model.message.delta': {
+        // Observed live: delta fragments arrive OpenAI-style under
+        // `tool_calls` ({index, id?, function: {name?, arguments}}), not the
+        // documented tool_call_deltas. Both are accepted; a fragment shape we
+        // drop is a tool call that assembles empty, which surfaces later as a
+        // gate nobody can render.
         const rawDeltas = Array.isArray(event['toolCallDeltas'])
           ? (event['toolCallDeltas'] as unknown[])
-          : undefined;
+          : Array.isArray(event['toolCalls'])
+            ? (event['toolCalls'] as unknown[])
+            : undefined;
 
         return wrap({
           type: 'model.message.delta',
@@ -181,17 +188,26 @@ export class WireTranslator {
             : {}),
           ...(rawDeltas
             ? {
-                toolCallDeltas: rawDeltas.filter(isBag).map((delta) => ({
-                  index: typeof delta['index'] === 'number' ? (delta['index'] as number) : 0,
-                  ...(typeof delta['id'] === 'string' ? { id: delta['id'] as string } : {}),
-                  ...(typeof delta['name'] === 'string' ? { name: delta['name'] as string } : {}),
-                  ...(typeof delta['serverName'] === 'string'
-                    ? { serverName: delta['serverName'] as string }
-                    : {}),
-                  ...(deltaArguments(delta) !== undefined
-                    ? { argumentsDelta: deltaArguments(delta) as string }
-                    : {}),
-                })),
+                toolCallDeltas: rawDeltas.filter(isBag).map((delta) => {
+                  const fn = isBag(delta['function']) ? delta['function'] : undefined;
+                  const name =
+                    typeof delta['name'] === 'string'
+                      ? (delta['name'] as string)
+                      : typeof fn?.['name'] === 'string'
+                        ? (fn['name'] as string)
+                        : undefined;
+                  return {
+                    index: typeof delta['index'] === 'number' ? (delta['index'] as number) : 0,
+                    ...(typeof delta['id'] === 'string' ? { id: delta['id'] as string } : {}),
+                    ...(name !== undefined ? { name } : {}),
+                    ...(typeof delta['serverName'] === 'string'
+                      ? { serverName: delta['serverName'] as string }
+                      : {}),
+                    ...(deltaArguments(delta) !== undefined
+                      ? { argumentsDelta: deltaArguments(delta) as string }
+                      : {}),
+                  };
+                }),
               }
             : {}),
         });

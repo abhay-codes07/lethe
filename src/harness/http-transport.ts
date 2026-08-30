@@ -112,7 +112,30 @@ export class HttpTransport implements Transport {
   }
 
   listTurnEvents(sessionId: string, turnId: string): AsyncIterable<ReceivedEvent> {
-    return this.#stream(routes.events(sessionId, turnId), { method: 'GET' });
+    // Observed live: this endpoint returns a JSON body ({"data": [...]}), not
+    // an event-stream. Piping JSON through the SSE parser yields zero frames
+    // — a silent empty replay, which is how a lost reply stayed lost.
+    return this.#replayJson(routes.events(sessionId, turnId));
+  }
+
+  async *#replayJson(path: string): AsyncIterable<ReceivedEvent> {
+    const response = await this.#fetch(this.#url(path), {
+      method: 'GET',
+      headers: { ...this.#headers(), accept: 'application/json' },
+    });
+
+    await assertOk(response, `replay ${path}`);
+
+    const body = (await response.json()) as { data?: unknown[] };
+    if (!Array.isArray(body.data)) {
+      throw new Error(`harness returned no event list for ${path}; expected a "data" array`);
+    }
+
+    const translator = new WireTranslator();
+    for (const [index, wireEvent] of body.data.entries()) {
+      const received = translator.translate(wireEvent, index + 1);
+      if (received) yield received;
+    }
   }
 
   async getTurn(sessionId: string, turnId: string): Promise<TurnState> {
@@ -123,18 +146,26 @@ export class HttpTransport implements Transport {
 
     await assertOk(response, 'get turn');
 
-    const body = (await response.json()) as {
+    // Observed live: like every other endpoint, the turn is wrapped in
+    // `data`. The unwrapped forms are kept for older builds.
+    const raw = (await response.json()) as {
+      data?: { id?: string; turn_id?: string; state?: { status?: string } };
       turn_id?: string;
       turnId?: string;
       state?: { status?: string };
     };
+    const body = raw.data ?? raw;
     const status = body.state?.status;
 
     if (!status) {
       throw new Error(`harness returned a turn with no status for ${turnId}`);
     }
 
-    return { turnId: body.turn_id ?? body.turnId ?? turnId, status: mapWireStatus(status) };
+    const bodyTurnId =
+      ('id' in body ? body.id : undefined) ??
+      body.turn_id ??
+      ('turnId' in body ? (body as { turnId?: string }).turnId : undefined);
+    return { turnId: bodyTurnId ?? turnId, status: mapWireStatus(status) };
   }
 
   /**

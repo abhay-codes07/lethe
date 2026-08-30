@@ -362,3 +362,24 @@ describe('runExecution — refusals', () => {
     assert.equal(opts.caseFile.state, 'failed');
   });
 });
+
+describe('isReadOnlySql', () => {
+  const cases: [string, boolean][] = [
+    ['SELECT * FROM users WHERE id = 1', true],
+    ['  WITH seed AS (SELECT 1) SELECT * FROM seed', true],
+    ['SELECT 1; DELETE FROM users', false],
+    ['DELETE FROM sessions WHERE user_id = 4471', false],
+    ['UPDATE users SET email = NULL', false],
+    // A data-modifying CTE is a write wearing a SELECT hat.
+    ['WITH gone AS (DELETE FROM sessions RETURNING id) SELECT count(*) FROM gone', false],
+    ['TRUNCATE users', false],
+    ['SELECT * FROM users; --', false],
+  ];
+
+  for (const [sql, expected] of cases) {
+    it(`${expected ? 'allows' : 'refuses'}: ${sql.slice(0, 44)}`, async () => {
+      const { isReadOnlySql } = await import('./orchestrator.ts');
+      assert.equal(isReadOnlySql(sql), expected);
+    });
+  }
+});

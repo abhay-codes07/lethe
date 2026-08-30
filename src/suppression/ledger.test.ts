@@ -45,8 +45,12 @@ describe('SuppressionLedger — recording', () => {
     await ledger(store).suppress(ada, 'DSR-118', ROTATES, NOW);
 
     const serialised = JSON.stringify(await store.all());
+    // Checked against the identifier and its parts — but not bare 'ada',
+    // which is valid hex and can legitimately appear inside a digest. That
+    // exact flake fired once in CI-like conditions before this comment.
     assert.ok(!serialised.includes('ada@example.com'));
-    assert.ok(!serialised.includes('ada'));
+    assert.ok(!serialised.includes('example.com'));
+    assert.ok(!serialised.includes('ada@'));
   });
 
   it('does not correlate the same person across installations', async () => {

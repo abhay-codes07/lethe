@@ -103,7 +103,17 @@ export async function runSimulation(options: SimulationOptions): Promise<Simulat
     throw fail(caseFile, 'run', `simulation ended as ${outcome.kind}`);
   }
 
-  const reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+  let reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+  if (reply === undefined) {
+    // Same live observation as discovery and verification: the stream can
+    // lose the reply; the merged-events replay has it.
+    try {
+      await runner.reconnect(outcome.turnId);
+      reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+    } catch {
+      // fall through
+    }
+  }
   if (reply === undefined) {
     throw fail(caseFile, 'parsing', 'simulation finished without a reply');
   }
@@ -211,6 +221,9 @@ export function parseBlastRadius(raw: string): ParsedBlastRadius {
       ...(typeof v['resolution'] === 'string' && v['resolution'] !== ''
         ? { resolution: v['resolution'] as string }
         : {}),
+      ...(typeof v['triggeredBy'] === 'string' && v['triggeredBy'] !== ''
+        ? { triggeredBy: v['triggeredBy'] as string }
+        : {}),
     });
   }
 
@@ -242,7 +255,7 @@ function simulationPrompt(caseFile: CaseFile): string {
   const lines = plan.actions.map((action) => {
     const finding = byId.get(action.findingId);
     const where = finding ? `${finding.system}: ${describeLocator(finding.locator)}` : action.findingId;
-    return `  - ${action.disposition.toUpperCase()} ${where} (${action.count} record(s))`;
+    return `  - [${action.findingId}] ${action.disposition.toUpperCase()} ${where} (${action.count} record(s))`;
   });
 
   return [
@@ -254,9 +267,15 @@ function simulationPrompt(caseFile: CaseFile): string {
     'Apply it to a copy, never to the live data: restore a snapshot in your',
     'sandbox, or run the statements inside a transaction you roll back. Then',
     'measure:',
-    '  - every referential constraint the deletions would violate, by name',
+    '  - every referential constraint the deletions would violate, by name,',
+    '    each with "triggeredBy" set to the [finding id] of the plan line',
+    '    whose statement violated it — amendment is deterministic only when',
+    '    the trigger is named',
     '  - how many rows would be left orphaned',
-    '  - how many traces of the subject would remain after the plan ran',
+    '  - residualTraces: traces of the subject that the plan CLAIMS to remove',
+    '    but which would survive it. Rows the plan explicitly RETAINs or',
+    '    ANONYMISEs are accounted for, not residual — a retained legal hold',
+    '    still naming the subject is the plan working, not failing.',
     '',
     'Count in code. Report what you measured, exactly — a violation you',
     'find now is a correction to the plan; one that appears during execution',
@@ -264,8 +283,8 @@ function simulationPrompt(caseFile: CaseFile): string {
     '',
     'Reply with JSON only, in this shape:',
     '{"blastRadius":{"constraintViolations":[{"constraint":"","table":"",',
-    '"affectedRows":0,"resolution":""}],"orphanedRecords":0,"residualTraces":0,',
-    '"snapshotId":"","simulatedAt":""}}',
+    '"affectedRows":0,"resolution":"","triggeredBy":""}],"orphanedRecords":0,',
+    '"residualTraces":0,"snapshotId":"","simulatedAt":""}}',
     '',
     'snapshotId names the copy you measured against.',
   ].join('\n');

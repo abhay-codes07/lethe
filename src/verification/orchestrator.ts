@@ -121,7 +121,17 @@ export async function runVerification(options: VerificationOptions): Promise<Ver
     throw fail(caseFile, 'run', `verification sweep ended as ${outcome.kind}`);
   }
 
-  const reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+  let reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+  if (reply === undefined) {
+    // Same live observation as discovery: replay the merged events when the
+    // stream lost the reply.
+    try {
+      await runner.reconnect(outcome.turnId);
+      reply = runner.index.messages().filter((m) => m.content.trim() !== '').at(-1)?.content;
+    } catch {
+      // fall through
+    }
+  }
   if (reply === undefined) {
     throw fail(caseFile, 'parsing', 'verification sweep finished without a reply');
   }
@@ -312,7 +322,14 @@ function sweepPrompt(
     'reporting a clean result over a dirty one converts an operational miss',
     'into a false attestation.',
     '',
-    'Count records in code. Do not include personal data in your reply.',
+    'Count records in code. Do not include personal data in locators or ids —',
+    'but matchedBy must copy one of the identifiers above VERBATIM (kind,',
+    'value, system exactly as listed). It references the case record; the',
+    'retained certificate redacts separately. matchedBy.kind must be one of:',
+    'email, phone, user_id, account_id, stripe_customer, support_contact,',
+    'device_id, vector_document, object_key. category must be one of:',
+    'identity, contact, financial, behavioural, communications,',
+    'special_category, derived.',
     '',
     'Reply with JSON only, in this shape:',
     '{"findings":[{"id":"","system":"","locator":{"kind":"table","schema":"",',

@@ -52,6 +52,37 @@ export type RunOutcome =
   | { readonly kind: 'blocked'; readonly turnId: string; readonly unresolved: readonly ApprovalRequest[] }
   | { readonly kind: 'failed'; readonly turnId: string; readonly status: TurnStatus };
 
+/**
+ * Unwrap the harness's `call_tool` envelope.
+ *
+ * Observed live: MCP invocations arrive as a builtin `call_tool` carrying
+ * `{mcp_server, tool_name, input}`, and the approval pause references that
+ * wrapper. What a person — and reconciliation — must judge is the inner
+ * call: `execute_sql` against `acme-postgres-rw` with this SQL, not
+ * "call_tool". The unwrap happens at resolution, the single place feeding
+ * both the approval surface and the scope check.
+ */
+function unwrapCallTool(resolved: ToolCallResolution): ToolCallResolution {
+  if (!resolved.complete || resolved.name !== 'call_tool') return resolved;
+
+  const server = resolved.arguments['mcp_server'];
+  const inner = resolved.arguments['tool_name'];
+  const input = resolved.arguments['input'];
+
+  if (typeof server !== 'string' || typeof inner !== 'string') return resolved;
+
+  return {
+    complete: true,
+    id: resolved.id,
+    name: inner,
+    serverName: server,
+    arguments:
+      typeof input === 'object' && input !== null && !Array.isArray(input)
+        ? (input as Readonly<Record<string, unknown>>)
+        : {},
+  };
+}
+
 export class TurnRunner {
   #index = new EventIndex();
   #turnId: string | undefined;
@@ -234,7 +265,7 @@ export class TurnRunner {
       pause.toolCalls.map((ref) => ({
         threadId: pause.threadId,
         toolCallId: ref.id,
-        call: this.#index.resolveToolCall(ref),
+        call: unwrapCallTool(this.#index.resolveToolCall(ref)),
       })),
     );
   }

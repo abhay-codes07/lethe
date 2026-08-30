@@ -71,7 +71,61 @@ export function scoutFromEnv(base: AgentSpec, env: NodeJS.ProcessEnv = process.e
     spec = applyCredentialBasis(spec, credentialReadOnly.split(',').map((s) => s.trim()));
   }
 
-  return withModelFromEnv(spec, env);
+  return withModelFromEnv(withoutSandboxFromEnv(spec, env), env);
+}
+
+/**
+ * Run without harness-side skills or a sandbox.
+ *
+ * Skills are registered server-side and materialise in a sandbox, which is a
+ * separate provider needing its own credentials. A harness without one can
+ * still run the whole erasure loop: the retention rules that decide
+ * dispositions live in this codebase's planner and are applied
+ * deterministically — the skill packs are guidance for the agent on top,
+ * not the mechanism. LETHE_NO_SANDBOX states plainly that this run does
+ * without both.
+ */
+/**
+ * Point the executor's Postgres binding at a differently-named connector.
+ *
+ * The split exists because one registered connector carries one credential.
+ * The scout's connector holds the read-only role; execution needs the write
+ * role, which therefore lives behind its own connector name. The gates
+ * travel with the binding — the rename changes which credential answers,
+ * never what is gated.
+ */
+export function withExecutorConnectorFromEnv(
+  spec: AgentSpec,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentSpec {
+  const renamed = env['LETHE_EXECUTOR_CONNECTOR']?.trim();
+  if (!renamed) return spec;
+  return {
+    ...spec,
+    mcpServers: spec.mcpServers.map((binding) =>
+      binding.name === 'acme-postgres'
+        ? {
+            ...binding,
+            name: renamed,
+            // Observed live: the harness refuses the whole toolset when the
+            // enable list names tools the server does not have. postgres-mcp
+            // exposes SQL, not per-operation tools, so the binding narrows to
+            // the one tool that exists — gated by name, so every use pauses.
+            enableTools: ['execute_sql'],
+            requireApprovalForTools: ['@write', 'execute_sql'],
+          }
+        : binding,
+    ),
+  };
+}
+
+export function withoutSandboxFromEnv(spec: AgentSpec, env: NodeJS.ProcessEnv = process.env): AgentSpec {
+  if (env['LETHE_NO_SANDBOX'] !== '1') return spec;
+  return {
+    ...spec,
+    skills: [],
+    config: { ...spec.config, sandbox: { enabled: false } },
+  };
 }
 
 /**
