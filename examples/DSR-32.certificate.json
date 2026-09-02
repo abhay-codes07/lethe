@@ -1,0 +1,94 @@
+{
+  "requestId": "DSR-32",
+  "subject": {
+    "digest": "19e2a8f642844277ff04e79c7427de07d0170110db1fa64e3ac30fb33c4d31b2",
+    "algorithm": "sha256"
+  },
+  "issuedAt": "2026-09-02T07:23:47.771Z",
+  "entries": [
+    {
+      "system": "acme-postgres",
+      "location": "public.users",
+      "disposition": "anonymise",
+      "recordsAffected": 1,
+      "justification": "Hard delete violates support_tickets_user_id_fkey (2 row(s) in public.support_tickets); orders_customer_id_fkey (1 row(s) in public.orders); invoices_customer_id_fkey (1 row(s) in public.invoices); legal_holds_subject_id_fkey (1 row(s) in public.legal_holds). The link to the subject is severed and the row kept, so dependent records keep their referent.",
+      "irrecoverable": true
+    },
+    {
+      "system": "acme-postgres",
+      "location": "public.support_tickets",
+      "disposition": "anonymise",
+      "recordsAffected": 2,
+      "justification": "Publicly published contributions by other users that reference the subject are not unilaterally erasable; the authoring identity is removed instead. Link to the subject is severed; the record is kept.",
+      "citation": "GDPR Art.17(3)(a)",
+      "irrecoverable": true
+    },
+    {
+      "system": "acme-postgres",
+      "location": "public.legal_holds",
+      "disposition": "retain",
+      "recordsAffected": 1,
+      "justification": "Data subject to an open dispute, chargeback or legal hold must be preserved until the matter closes.",
+      "citation": "GDPR Art.17(3)(e)",
+      "irrecoverable": false
+    },
+    {
+      "system": "acme-postgres",
+      "location": "public.orders",
+      "disposition": "anonymise",
+      "recordsAffected": 1,
+      "justification": "Transaction records supporting a filed tax return must be retained for the statutory period. The financial fact is retained; the identity attached to it can be removed. Link to the subject is severed; the record is kept.",
+      "citation": "GDPR Art.17(3)(b); national tax record-keeping obligation",
+      "irrecoverable": true
+    },
+    {
+      "system": "acme-postgres",
+      "location": "public.order_items",
+      "disposition": "anonymise",
+      "recordsAffected": 2,
+      "justification": "Transaction records supporting a filed tax return must be retained for the statutory period. The financial fact is retained; the identity attached to it can be removed. Link to the subject is severed; the record is kept.",
+      "citation": "GDPR Art.17(3)(b); national tax record-keeping obligation",
+      "irrecoverable": true
+    },
+    {
+      "system": "acme-postgres",
+      "location": "public.invoices",
+      "disposition": "anonymise",
+      "recordsAffected": 1,
+      "justification": "Transaction records supporting a filed tax return must be retained for the statutory period. The financial fact is retained; the identity attached to it can be removed. Link to the subject is severed; the record is kept.",
+      "citation": "GDPR Art.17(3)(b); national tax record-keeping obligation",
+      "irrecoverable": true
+    }
+  ],
+  "approval": {
+    "approvedBy": "abhay",
+    "approvedAt": "2026-09-02T07:19:48.852Z",
+    "planDigest": "ff0fdcb3c1a9d558871bf5868eb08fe612a26757ece670d3bf8eb68ccfd5079c"
+  },
+  "verification": {
+    "rediscoveredAt": "2026-09-02T07:23:47.771Z",
+    "systemsSwept": [
+      "acme-postgres"
+    ],
+    "residualTraces": 0,
+    "compactionsConfirmed": []
+  },
+  "scope": {
+    "systemsDeclared": [
+      "acme-postgres"
+    ],
+    "systemsExcluded": [],
+    "identifierKindsSearched": [
+      "email"
+    ],
+    "identifierCount": 1
+  },
+  "beyondUse": {
+    "identifiersSuppressed": 1,
+    "finalRotationAt": "2026-12-01T07:19:48.852Z",
+    "statement": "Copies of this data remain in backup media that cannot be edited in place. The affected identifiers are recorded on a suppression ledger which every restore consults, so the data cannot re-enter a live system or inform any decision about the subject. It is deleted when the media rotates on the date given above."
+  },
+  "limits": "This certifies erasure within the scope recorded above. It attests that the listed systems were searched under the listed identifier kinds and that no trace remained. It does not attest to absence in systems not listed, under identifiers not resolved, or in unstructured stores outside the declared connectors.",
+  "auditChainHead": "66d86a71dbb649f0c9ddbc1838770508414d6a5f35de97e28634ca7cd91fd911",
+  "eventCount": 8
+}
