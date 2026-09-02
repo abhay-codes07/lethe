@@ -373,9 +373,14 @@ function executionPrompt(
     'DELETE that matches zero rows reports success while erasing nothing.',
     '',
     'Where the plan says anonymise, sever the link to the subject and keep the',
-    'record. Where it says delete and compact, the delete is not finished until',
-    'compaction has run. If a line no longer applies, stop and report rather',
-    'than improvising a replacement. Never widen scope: data the plan does not',
-    'cover means a new plan, not a bigger run.',
+    'record. Compaction is owed only where a plan line itself says delete and',
+    "compact, and then through that store's own compaction operation. Never",
+    'issue storage-maintenance SQL (VACUUM, ANALYZE, REINDEX, CLUSTER): it does',
+    'not name the rows it touches, so it cannot be checked against the plan and',
+    'is denied, ending the run. Row-level erasure is the whole of the job;',
+    'reclaiming physical storage belongs to the platform, not this run. If a',
+    'line no longer applies, stop and report rather than improvising a',
+    'replacement. Never widen scope: data the plan does not cover means a new',
+    'plan, not a bigger run.',
   ].join('\n');
 }
